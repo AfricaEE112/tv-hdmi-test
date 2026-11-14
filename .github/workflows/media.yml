@@ -32,20 +32,63 @@ jobs:
           curl -sSL -A "$UA" -o src/brick.webm 'https://upload.wikimedia.org/wikipedia/commons/b/bb/Fantastic-fireplace-fire-chimney-hearth-_background_-_texture_-_motion_graphics_-_free_video_library.webm' || true
           ls -la src
 
-      - name: Probe and preview frames
+      - name: Encode seamless loops (H.264 720p) and posters
         run: |
-          mkdir -p out/frames
-          for f in src/*.webm; do
-            n=$(basename "$f" .webm)
-            echo "== $n"; ffprobe -v error -show_entries format=duration:stream=codec_type,codec_name,width,height -of compact "$f" | tee "out/$n.probe.txt" || true
+          mkdir -p out
+          dur() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1"; }
+          enc="-c:v libx264 -profile:v high -level 4.0 -preset slow -pix_fmt yuv420p -g 50 -movflags +faststart"
+
+          # 1) Yule Log: 5 хв найкращого вогню (з 60-ї секунди) + справжній звук, петля з перетіканням 2 с
+          L=302; D=2; OFF=$((L - 2 * D))
+          ffmpeg -v error -y -ss 60 -t $L -i src/yule.webm -filter_complex "
+            [0:v]scale=1280:720:flags=lanczos,fps=25,format=yuv420p,split[v1][v2];
+            [v1]trim=start=$D:end=$L,setpts=PTS-STARTPTS[va];
+            [v2]trim=start=0:end=$D,setpts=PTS-STARTPTS[vb];
+            [va][vb]xfade=transition=fade:duration=$D:offset=$OFF[v];
+            [0:a]aresample=48000,asplit[a1][a2];
+            [a1]atrim=start=$D:end=$L,asetpts=PTS-STARTPTS[aa];
+            [a2]atrim=start=0:end=$D,asetpts=PTS-STARTPTS[ab];
+            [aa][ab]acrossfade=d=$D[a]" \
+            -map "[v]" -map "[a]" $enc -crf 23 -maxrate 2500k -bufsize 5000k -c:a aac -b:a 96k -ac 2 out/fireplace-yule.mp4
+
+          # 2) Kaminfeuer: 11 с, без звуку (звук Домівка синтезує), петля з перетіканням 1.5 с
+          L=$(dur src/kamin.webm); D=1.5; OFF=$(python3 -c "print(round($L - 2 * $D, 3))")
+          ffmpeg -v error -y -i src/kamin.webm -filter_complex "
+            [0:v]fps=25,format=yuv420p,split[v1][v2];
+            [v1]trim=start=$D,setpts=PTS-STARTPTS[va];
+            [v2]trim=start=0:end=$D,setpts=PTS-STARTPTS[vb];
+            [va][vb]xfade=transition=fade:duration=$D:offset=$OFF[v]" \
+            -map "[v]" -an $enc -crf 20 -maxrate 4000k -bufsize 8000k out/fireplace-kamin.mp4
+
+          # 3) Цегляний: 30 с, 1080p -> 720p, без звуку, петля з перетіканням 2 с
+          L=$(dur src/brick.webm); D=2; OFF=$(python3 -c "print(round($L - 2 * $D, 3))")
+          ffmpeg -v error -y -i src/brick.webm -filter_complex "
+            [0:v]scale=1280:720:flags=lanczos,fps=25,format=yuv420p,split[v1][v2];
+            [v1]trim=start=$D,setpts=PTS-STARTPTS[va];
+            [v2]trim=start=0:end=$D,setpts=PTS-STARTPTS[vb];
+            [va][vb]xfade=transition=fade:duration=$D:offset=$OFF[v]" \
+            -map "[v]" -an $enc -crf 21 -maxrate 3500k -bufsize 7000k out/fireplace-brick.mp4
+
+          # Обкладинки для вітрини Домівки
+          for id in yule kamin brick; do
+            ffmpeg -v error -y -ss 4 -i out/fireplace-$id.mp4 -frames:v 1 -vf scale=768:-2 -q:v 3 out/poster-$id.jpg
           done
-          # Кадри з Yule Log кожні 60 с, щоб вибрати найкращий відрізок
-          for t in $(seq 30 60 1680); do
-            ffmpeg -v error -ss $t -i src/yule.webm -frames:v 1 -vf scale=480:-2 "out/frames/yule_$(printf %04d $t).jpg" || true
-          done
-          for t in 1 5 9; do ffmpeg -v error -ss $t -i src/kamin.webm -frames:v 1 -vf scale=480:-2 "out/frames/kamin_$t.jpg" || true; done
-          for t in 2 12 24; do ffmpeg -v error -ss $t -i src/brick.webm -frames:v 1 -vf scale=480:-2 "out/frames/brick_$t.jpg" || true; done
-          (cd out && zip -qr ../media-probe.zip .)
+          ls -la out
+          for f in out/*.mp4; do echo "== $f"; ffprobe -v error -show_entries format=duration,bit_rate:stream=codec_name,profile,width,height -of compact "$f"; done
+          # Розміри для Домівки
+          python3 - <<'PY'
+          import json, os
+          sizes = {f: os.path.getsize('out/' + f) for f in os.listdir('out') if f.endswith('.mp4')}
+          json.dump(sizes, open('out/sizes.json', 'w'), indent=1)
+          print(sizes)
+          PY
+          # Контрольні кадри зі стику петлі (щоб перевірити, що він непомітний)
+          mkdir -p check
+          ffmpeg -v error -y -sseof -0.2 -i out/fireplace-kamin.mp4 -frames:v 1 -vf scale=480:-2 check/kamin_end.jpg
+          ffmpeg -v error -y -ss 0 -i out/fireplace-kamin.mp4 -frames:v 1 -vf scale=480:-2 check/kamin_start.jpg
+          ffmpeg -v error -y -sseof -0.2 -i out/fireplace-yule.mp4 -frames:v 1 -vf scale=480:-2 check/yule_end.jpg
+          ffmpeg -v error -y -ss 0 -i out/fireplace-yule.mp4 -frames:v 1 -vf scale=480:-2 check/yule_start.jpg
+          zip -qr out/check.zip check
 
       - name: Publish
         env:
@@ -53,4 +96,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release delete media --yes --cleanup-tag || true
-          gh release create media media-probe.zip --target "${{ github.sha }}" --title "Відео каміна" --notes "Службовий реліз з відео для Домівки" --prerelease
+          gh release create media out/fireplace-yule.mp4 out/fireplace-kamin.mp4 out/fireplace-brick.mp4 out/poster-yule.jpg out/poster-kamin.jpg out/poster-brick.jpg out/sizes.json out/check.zip --target "${{ github.sha }}" --title "Відео каміна" --notes "Службовий реліз з відео для Домівки" --prerelease
