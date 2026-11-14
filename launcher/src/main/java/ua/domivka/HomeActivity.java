@@ -29,7 +29,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -95,6 +98,7 @@ public class HomeActivity extends Activity {
     private static final int GLASS = Color.argb(70, 255, 255, 255);
     private static final int OK_GREEN = Color.rgb(110, 240, 160);
     private static final int WARM = Color.rgb(255, 196, 120);
+    private static final int ALERT_RED = Color.rgb(255, 92, 92);
 
     private static final String TAG_CONSOLE = "console";
     private static final String TAG_FIRE = "fire";
@@ -113,6 +117,8 @@ public class HomeActivity extends Activity {
     private int wallpaperBucket = -1;
     private ScrollView scroll;
     private TextView sleepInfo;
+    private TextView alertPill;
+    private LinearLayout heroPanel;
 
     // вітрина (як «Top Shelf» на Apple TV): показує те, на чому зараз фокус
     private FrameLayout hero;
@@ -144,6 +150,7 @@ public class HomeActivity extends Activity {
                 return;
             }
             updateSleepInfo();
+            updateAlertPill();
             refreshWeather(false);
             if (resumed) {
                 Updater.checkAndPrompt(HomeActivity.this, false);
@@ -214,6 +221,9 @@ public class HomeActivity extends Activity {
         loadSources();
         refreshWeather(false);
         main.post(this::focusConsole);
+        Alerts.listener = this::onAlertChanged;
+        Alerts.start(this);
+        main.postDelayed(() -> Updater.showWhatsNewIfUpdated(this), 1500);
         main.postDelayed(() -> Updater.checkAndPrompt(this, false), 8000);
     }
 
@@ -222,6 +232,8 @@ public class HomeActivity extends Activity {
         super.onResume();
         resumed = true;
         App.homeResumed = true;
+        AlertOverlay.update(this);
+        updateAlertPill();
         updateWallpaper();
         refreshSourceStates();
         refreshWeather(false);
@@ -255,6 +267,7 @@ public class HomeActivity extends Activity {
         super.onPause();
         resumed = false;
         App.homeResumed = false;
+        AlertOverlay.update(this);
         main.removeCallbacks(idleCheck);
         if (heroFire != null) {
             heroFire.stop();
@@ -271,6 +284,9 @@ public class HomeActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (Alerts.listener != null) {
+            Alerts.listener = null;
+        }
         try {
             unregisterReceiver(packageReceiver);
         } catch (Throwable ignored) {
@@ -341,6 +357,17 @@ public class HomeActivity extends Activity {
         style(date, 18, TEXT_DIM, false);
         top.addView(date, new LinearLayout.LayoutParams(0, -2, 1f));
 
+        alertPill = text("", 15, TEXT, true);
+        GradientDrawable pillBg = new GradientDrawable();
+        pillBg.setColor(0xE6C62828);
+        pillBg.setCornerRadius(dp(16));
+        alertPill.setBackground(pillBg);
+        alertPill.setPadding(dp(14), dp(4), dp(14), dp(5));
+        alertPill.setVisibility(View.GONE);
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-2, -2);
+        ap.rightMargin = dp(22);
+        top.addView(alertPill, ap);
+
         weatherMiniIcon = new ImageView(this);
         top.addView(weatherMiniIcon, new LinearLayout.LayoutParams(dp(26), dp(26)));
         weatherMiniText = text("", 18, TEXT, false);
@@ -395,6 +422,19 @@ public class HomeActivity extends Activity {
         heroArt = new ImageView(this);
         heroArt.setVisibility(View.GONE);
         hero.addView(heroArt, new FrameLayout.LayoutParams(dp(384), dp(216), Gravity.END | Gravity.CENTER_VERTICAL));
+
+        heroPanel = new LinearLayout(this);
+        heroPanel.setOrientation(LinearLayout.VERTICAL);
+        heroPanel.setPadding(dp(24), dp(18), dp(24), dp(20));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(Color.argb(46, 255, 255, 255));
+        panelBg.setStroke(dp(1), Color.argb(40, 255, 255, 255));
+        panelBg.setCornerRadius(dp(22));
+        heroPanel.setBackground(panelBg);
+        heroPanel.setVisibility(View.GONE);
+        FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-2, -2, Gravity.END | Gravity.CENTER_VERTICAL);
+        pp.rightMargin = dp(24);
+        hero.addView(heroPanel, pp);
 
         heroText = new LinearLayout(this);
         heroText.setOrientation(LinearLayout.VERTICAL);
@@ -975,7 +1015,7 @@ public class HomeActivity extends Activity {
         } else if (TAG_FIRE.equals(tag)) {
             chooseFireplace();
         } else if (TAG_WEATHER.equals(tag)) {
-            chooseCity();
+            chooseAlertMode();
         } else if (TAG_CONSOLE.equals(tag) || (tag instanceof String && ((String) tag).startsWith("src:"))) {
             showConsoleMenu();
         } else {
@@ -1028,6 +1068,9 @@ public class HomeActivity extends Activity {
 
         items.add("Місто для погоди: " + Weather.CITY_NAMES[Weather.cityIndex(this)]);
         actions.add(this::chooseCity);
+
+        items.add("Повітряна тривога: " + Alerts.MODES[Alerts.mode(this)]);
+        actions.add(this::chooseAlertMode);
 
         items.add("Приховані застосунки (" + hidden.size() + ")");
         actions.add(this::showHiddenApps);
@@ -1278,8 +1321,9 @@ public class HomeActivity extends Activity {
     /** Невелика плашка джерела сигналу. */
     // ================================================================ вітрина
 
-    private void setHero(String title, String sub, String hint) {
+    private void setHero(String title, CharSequence sub, String hint) {
         setHeroFire(false);
+        heroPanel.setVisibility(View.GONE);
         heroTitle.setText(title);
         heroSub.setText(sub == null ? "" : sub);
         heroSub.setVisibility(sub == null ? View.GONE : View.VISIBLE);
@@ -1454,10 +1498,25 @@ public class HomeActivity extends Activity {
             setHeroArt(getDrawable(R.drawable.ic_w_partly), 160, 160, false);
             return;
         }
-        setHero(weather.city + "   " + Weather.temp(weather.temp),
+        SpannableStringBuilder sub = new SpannableStringBuilder(
                 Weather.describe(weather.code) + ", відчувається як " + Weather.temp(weather.feels)
-                        + ", вітер " + weather.wind + " м/с",
-                "OK: вибрати місто");
+                        + ", вітер " + weather.wind + " м/с");
+        if (Alerts.known && Alerts.mode(this) != Alerts.MODE_OFF) {
+            sub.append("\n");
+            int from = sub.length();
+            if (Alerts.active) {
+                sub.append("Повітряна тривога ").append(Alerts.where(Alerts.region))
+                        .append(" · ").append(Alerts.duration(Alerts.since));
+                sub.setSpan(new ForegroundColorSpan(ALERT_RED), from, sub.length(),
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            } else {
+                sub.append("Тривоги немає ").append(Alerts.where(Alerts.region));
+                sub.setSpan(new ForegroundColorSpan(OK_GREEN), from, sub.length(),
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+        }
+        setHero(weather.city + "   " + Weather.temp(weather.temp), sub,
+                "OK: вибрати місто   ·   Menu: сповіщення про тривогу");
         heroForecast.removeAllViews();
         int n = Math.min(5, weather.days.length);
         for (int k = 0; k < n; k++) {
@@ -1477,7 +1536,70 @@ public class HomeActivity extends Activity {
             heroForecast.addView(col);
         }
         heroForecast.setVisibility(n > 0 ? View.VISIBLE : View.GONE);
-        setHeroArt(getDrawable(Weather.icon(weather.code, weather.isDay)), 170, 170, false);
+
+        Weather.Hour[] hours = Weather.upcoming(weather, 6, 2);
+        if (hours.length >= 3) {
+            setHeroArt(null, 0, 0, false);
+            heroPanel.removeAllViews();
+            heroPanel.addView(text("Найближчі години", 14, TEXT_DIM, true));
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, dp(10), 0, 0);
+            for (Weather.Hour h : hours) {
+                LinearLayout col = new LinearLayout(this);
+                col.setOrientation(LinearLayout.VERTICAL);
+                col.setGravity(Gravity.CENTER_HORIZONTAL);
+                col.addView(text(String.format(Locale.ROOT, "%02d:00", h.hour), 14, TEXT_DIM, false));
+                ImageView ic = new ImageView(this);
+                ic.setImageResource(Weather.icon(h.code, h.isDay));
+                LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(36), dp(36));
+                ip.topMargin = dp(6);
+                ip.bottomMargin = dp(6);
+                col.addView(ic, ip);
+                col.addView(text(Weather.temp(h.temp), 18, TEXT, true));
+                row.addView(col, new LinearLayout.LayoutParams(dp(66), -2));
+            }
+            heroPanel.addView(row);
+            heroPanel.setVisibility(View.VISIBLE);
+            heroPanel.setAlpha(0f);
+            heroPanel.setTranslationX(dp(16));
+            heroPanel.animate().alpha(1f).translationX(0).setDuration(260).start();
+        } else {
+            setHeroArt(getDrawable(Weather.icon(weather.code, weather.isDay)), 170, 170, false);
+        }
+    }
+
+    // ================================================================ тривога
+
+    private void onAlertChanged() {
+        updateAlertPill();
+        View f = getCurrentFocus();
+        if (f != null && TAG_WEATHER.equals(f.getTag())) {
+            heroWeather();
+        }
+    }
+
+    private void updateAlertPill() {
+        if (alertPill == null) {
+            return;
+        }
+        boolean show = Alerts.active && Alerts.mode(this) != Alerts.MODE_OFF;
+        if (show) {
+            alertPill.setText("Тривога  ·  " + Alerts.duration(Alerts.since));
+        }
+        alertPill.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    private void chooseAlertMode() {
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Повітряна тривога (" + (Weather.cityIndex(this) == 0 ? "Київ" : "Київська область") + ")")
+                .setSingleChoiceItems(Alerts.MODES, Alerts.mode(this), (d, which) -> {
+                    d.dismiss();
+                    Alerts.setMode(this, which);
+                    updateAlertPill();
+                    toast("Тривога: " + Alerts.MODES[which]);
+                })
+                .show();
     }
 
     private void heroApp(AppEntry app) {
@@ -1564,6 +1686,7 @@ public class HomeActivity extends Activity {
                     weather = null;
                     onWeatherChanged();
                     refreshWeather(true);
+                    Alerts.poll();
                 })
                 .show();
     }

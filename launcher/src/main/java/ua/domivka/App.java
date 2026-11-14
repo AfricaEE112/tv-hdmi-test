@@ -29,11 +29,14 @@ public class App extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        // Повітряна тривога: опитування, поки живий процес Домівки (а він живий завжди як головний екран)
+        Alerts.start(this);
         // Вихід телевізора з режиму очікування: екран вмикається знову.
         registerReceiver(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 schedule(context, null);
+                Alerts.poll();
             }
         }, new IntentFilter(Intent.ACTION_SCREEN_ON));
     }

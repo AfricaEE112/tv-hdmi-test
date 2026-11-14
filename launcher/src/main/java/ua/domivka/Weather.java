@@ -29,12 +29,13 @@ final class Weather {
     static final String[] CITY_NAMES = {
             "Київ", "Бровари", "Бориспіль", "Ірпінь", "Буча", "Вишгород", "Боярка",
             "Васильків", "Обухів", "Фастів", "Біла Церква", "Переяслав", "Славутич",
+            "Вороньків",
     };
     private static final double[][] CITY_COORDS = {
             {50.4501, 30.5234}, {50.5110, 30.7909}, {50.3527, 30.9550}, {50.5218, 30.2506},
             {50.5435, 30.2120}, {50.5848, 30.4890}, {50.3290, 30.2880}, {50.1773, 30.3178},
             {50.1069, 30.6176}, {50.0780, 29.9177}, {49.7968, 30.1311}, {50.0650, 31.4450},
-            {51.5223, 30.7202},
+            {51.5223, 30.7202}, {50.2223, 30.9011},
     };
 
     static final class Day {
@@ -42,6 +43,14 @@ final class Weather {
         int code;
         int max;
         int min;
+    }
+
+    static final class Hour {
+        int hour; // 0..23
+        int code;
+        int temp;
+        boolean isDay;
+        String key; // «2026-11-14T18:00»
     }
 
     static final class Data {
@@ -52,6 +61,7 @@ final class Weather {
         boolean isDay;
         int wind;
         Day[] days = new Day[0];
+        Hour[] hours = new Hour[0];
         long time;
     }
 
@@ -98,6 +108,7 @@ final class Weather {
                 "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
                         + "&current=temperature_2m,apparent_temperature,weather_code,is_day,wind_speed_10m"
                         + "&daily=weather_code,temperature_2m_max,temperature_2m_min"
+                        + "&hourly=temperature_2m,weather_code,is_day&forecast_hours=24"
                         + "&wind_speed_unit=ms&timezone=Europe%%2FKyiv&forecast_days=6",
                 CITY_COORDS[i][0], CITY_COORDS[i][1]);
         HttpURLConnection conn = null;
@@ -161,7 +172,53 @@ final class Weather {
             day.min = (int) Math.round(min.getDouble(k));
             d.days[k] = day;
         }
+
+        // Погодинно (у старому збереженому прогнозі цього ще немає)
+        JSONObject hourly = root.optJSONObject("hourly");
+        if (hourly != null) {
+            JSONArray times = hourly.getJSONArray("time");
+            JSONArray ht = hourly.getJSONArray("temperature_2m");
+            JSONArray hc = hourly.getJSONArray("weather_code");
+            JSONArray hd = hourly.optJSONArray("is_day");
+            java.util.List<Hour> list = new java.util.ArrayList<>();
+            for (int k = 0; k < times.length(); k++) {
+                // «2026-11-14T18:00», час київський
+                Hour h = new Hour();
+                h.hour = Integer.parseInt(times.getString(k).substring(11, 13));
+                h.temp = (int) Math.round(ht.getDouble(k));
+                h.code = hc.getInt(k);
+                h.isDay = hd == null || hd.optInt(k, 1) == 1;
+                h.key = times.getString(k);
+                list.add(h);
+            }
+            d.hours = list.toArray(new Hour[0]);
+        }
         return d;
+    }
+
+    /**
+     * Наступні години з кроком [step], починаючи з найближчої після поточної.
+     * Застарілі (якщо прогноз давно збережений) пропускаються.
+     */
+    static Hour[] upcoming(Data d, int count, int step) {
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:00", Locale.ROOT);
+        f.setTimeZone(java.util.TimeZone.getTimeZone("Europe/Kyiv"));
+        String now = f.format(new java.util.Date());
+        java.util.List<Hour> out = new java.util.ArrayList<>();
+        int start = -1;
+        for (int k = 0; k < d.hours.length; k++) {
+            if (d.hours[k].key.compareTo(now) > 0) {
+                start = k;
+                break;
+            }
+        }
+        if (start < 0) {
+            return new Hour[0];
+        }
+        for (int k = start; k < d.hours.length && out.size() < count; k += step) {
+            out.add(d.hours[k]);
+        }
+        return out.toArray(new Hour[0]);
     }
 
     static String temp(int t) {

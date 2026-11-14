@@ -31,10 +31,16 @@ jobs:
           cp launcher/build/outputs/apk/debug/launcher-debug.apk domivka.apk
           cp app/build/outputs/apk/debug/app-debug.apk hdmi-test.apk
           (cd tools && zip -r ../tv-tools.zip .)
-          # Для оновлення по повітрю: Домівка порівнює versionCode зі своїм
-          VC=$(grep -oP "versionCode \K[0-9]+" launcher/build.gradle)
-          VN=$(grep -oP "versionName '\K[^']+" launcher/build.gradle)
-          printf '{"versionCode": %s, "versionName": "%s"}\n' "$VC" "$VN" > version.json
+          # Для оновлення по повітрю: Домівка порівнює versionCode зі своїм і показує notes
+          python3 - <<'PY'
+          import json, re
+          g = open('launcher/build.gradle', encoding='utf-8').read()
+          vc = int(re.search(r"versionCode (\d+)", g).group(1))
+          vn = re.search(r"versionName '([^']+)'", g).group(1)
+          notes = open('launcher/src/main/res/raw/whatsnew.txt', encoding='utf-8').read().strip()
+          with open('version.json', 'w', encoding='utf-8') as f:
+              json.dump({"versionCode": vc, "versionName": vn, "notes": notes}, f, ensure_ascii=False)
+          PY
           cat version.json
 
       - uses: actions/upload-artifact@v4

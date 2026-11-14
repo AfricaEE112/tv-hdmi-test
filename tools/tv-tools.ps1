@@ -264,7 +264,10 @@ while (-not $quit) {
             # Доступ до статистики: Домівка точно бачитиме, що прошивка після ввімкнення
             # відкрила штатний лаунчер, і підмінятиме лише його
             Invoke-Sh 'appops set ua.domivka GET_USAGE_STATS allow' | Out-Null
-            Write-Host 'Домівці надано доступ до статистики використання (сторож увімкнення).'
+            # Показ поверх інших застосунків: банер повітряної тривоги поверх YouTube і консолі
+            Invoke-Sh 'appops set ua.domivka SYSTEM_ALERT_WINDOW allow' | Out-Null
+            Write-Host 'Домівці надано доступ до статистики використання (сторож увімкнення)'
+            Write-Host 'і дозвіл показувати тривогу поверх інших застосунків.'
         }
         '5' { Set-Home 'com.cvte.tv.launcher/.AppActivity' 'штатний' }
         '0' { $quit = $true }

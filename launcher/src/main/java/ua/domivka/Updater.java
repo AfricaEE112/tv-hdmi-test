@@ -31,6 +31,7 @@ final class Updater {
     private static final String P_LAST_CHECK = "update_last_check";
     private static final String P_AVAILABLE = "update_available_code";
     private static final String P_AVAILABLE_NAME = "update_available_name";
+    private static final String P_AVAILABLE_NOTES = "update_available_notes";
     static final long CHECK_EVERY_MS = 6 * 60 * 60_000L;
     static final String APK_NAME = "update.apk";
 
@@ -89,6 +90,7 @@ final class Updater {
                         .putLong(P_LAST_CHECK, System.currentTimeMillis())
                         .putInt(P_AVAILABLE, code)
                         .putString(P_AVAILABLE_NAME, name)
+                        .putString(P_AVAILABLE_NOTES, j.optString("notes", ""))
                         .apply();
             } catch (Throwable ignored) {
             }
@@ -131,12 +133,55 @@ final class Updater {
     }
 
     private static void prompt(Activity activity, String name) {
+        String notes = prefs(activity).getString(P_AVAILABLE_NOTES, "");
         new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Нова версія Домівки")
-                .setMessage("Доступна версія " + name + " (у вас " + currentName(activity) + ").\n"
+                .setTitle("Нова версія Домівки: " + name)
+                .setMessage((notes.isEmpty() ? "" : notes + "\n\n")
+                        + "У вас версія " + currentName(activity) + ". "
                         + "Завантажити і встановити зараз? Займе менше хвилини.")
                 .setPositiveButton("Оновити", (d, w) -> downloadAndInstall(activity))
                 .setNegativeButton("Пізніше", null)
+                .show();
+    }
+
+    /**
+     * Після оновлення (по повітрю чи вручну) один раз показуємо, що нового.
+     * Після першого встановлення нічого не показуємо.
+     */
+    static void showWhatsNewIfUpdated(Activity activity) {
+        int code = currentCode(activity);
+        int seen = prefs(activity).getInt("seen_version_code", 0);
+        if (seen == code) {
+            return;
+        }
+        prefs(activity).edit().putInt("seen_version_code", code).apply();
+        boolean updated;
+        try {
+            android.content.pm.PackageInfo pi =
+                    activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0);
+            updated = pi.lastUpdateTime - pi.firstInstallTime > 5_000L;
+        } catch (Throwable t) {
+            updated = seen != 0;
+        }
+        if (!updated) {
+            return;
+        }
+        String notes;
+        try (InputStream in = activity.getResources().openRawResource(R.raw.whatsnew)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[2048];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+            }
+            notes = out.toString("UTF-8").trim();
+        } catch (Throwable t) {
+            notes = "";
+        }
+        new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Домівку оновлено до версії " + currentName(activity))
+                .setMessage(notes)
+                .setPositiveButton("Чудово", null)
                 .show();
     }
 
