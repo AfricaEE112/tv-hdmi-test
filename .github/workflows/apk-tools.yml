@@ -23,6 +23,12 @@ jobs:
           API=$(find "$ANDROID_HOME/platforms" -name api-versions.xml | sort -V | tail -1)
           echo "using $API"
           gzip -9c "$API" > out/api-versions.xml.gz
+          # android.jar і d8 для локальної збірки шимів
+          JAR=$(ls "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp "$JAR" out/android.jar
+          cp "$BT/lib/d8.jar" out/d8.jar
+          echo "$JAR $BT" > out/versions.txt
       - name: Build shims (if any)
         run: |
           if [ -d tools/apkfix/shim ]; then
