@@ -5,6 +5,9 @@
     <uses-feature android:name="android.software.live_tv" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
+    <!-- Погода (Open-Meteo) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- «Звільнити пам'ять»: вивантаження фонових процесів інших застосунків -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
 
@@ -18,6 +21,7 @@
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
         android:label="Домівка"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.Home">
 
         <activity

@@ -13,8 +13,11 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -27,11 +30,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.HorizontalScrollView;
@@ -49,6 +54,7 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -74,28 +80,26 @@ public class HomeActivity extends Activity {
     private static final String P_LAUNCH_PREFIX = "launch_";
 
     // ---- розміри (dp); екран телевізора 1280x720 dp
-    private static final int SIDE = 56;
-    private static final int GAP = 18;
-    private static final int TILE_H = 150;
-    private static final int CONSOLE_W = 330;
-    private static final int PIN_W = 200;
-    private static final int APP_W = 172;
-    private static final int APP_H = 97;
-    private static final int APP_COLUMNS = 6;
+    private static final int SIDE = 64;
+    private static final int TILE_W = 200;
+    private static final int TILE_H = 120;
+    private static final int TILE_GAP = 8;      // між обгортками (підпис ширший за плитку на 20dp)
+    private static final int HERO_H = 300;
+    private static final int APP_COLUMNS = 5;
 
     // ---- кольори
     private static final int TEXT = Color.WHITE;
-    private static final int TEXT_DIM = Color.rgb(169, 180, 208);
-    private static final int CARD = Color.argb(225, 30, 38, 66);
-    private static final int ACCENT = Color.rgb(124, 92, 255);
+    private static final int TEXT_DIM = Color.argb(190, 225, 232, 245);
+    private static final int TEXT_HINT = Color.argb(150, 225, 232, 245);
+    private static final int CARD = Color.argb(110, 255, 255, 255);
+    private static final int GLASS = Color.argb(70, 255, 255, 255);
     private static final int OK_GREEN = Color.rgb(110, 240, 160);
-    private static final int[][] PALETTE = {
-            {0xFF3A7BFF, 0xFF6A3DFF}, {0xFF00B3A4, 0xFF006F8E}, {0xFFFF8A3D, 0xFFE0365E},
-            {0xFF5B6CFF, 0xFF2F3A8F}, {0xFF2BB673, 0xFF16705B}, {0xFFB04BFF, 0xFF6A1FB0},
-    };
+    private static final int WARM = Color.rgb(255, 196, 120);
 
     private static final String TAG_CONSOLE = "console";
     private static final String TAG_FIRE = "fire";
+    private static final String TAG_WEATHER = "weather";
+    private static final String TAG_YOUTUBE = "youtube";
     private static final String P_SAVER = "saver_minutes";
     private static final int[] SAVER_OPTIONS = {5, 10, 20, 30, 0};
 
@@ -105,9 +109,27 @@ public class HomeActivity extends Activity {
     private TvInputManager tvInputs;
     private boolean resumed;
 
+    private FrameLayout rootView;
+    private int wallpaperBucket = -1;
     private ScrollView scroll;
-    private TextView greeting;
     private TextView sleepInfo;
+
+    // вітрина (як «Top Shelf» на Apple TV): показує те, на чому зараз фокус
+    private FrameLayout hero;
+    private View heroGlow;
+    private FireView heroFire;
+    private ImageView heroArt;
+    private LinearLayout heroText;
+    private TextView heroTitle;
+    private TextView heroSub;
+    private LinearLayout heroForecast;
+    private TextView heroHint;
+    private final Map<View, Runnable> heroActions = new HashMap<>();
+
+    private ImageView weatherMiniIcon;
+    private TextView weatherMiniText;
+    private Weather.Data weather;
+    private boolean weatherLoading;
     private long lastInteraction;
 
     /** Заставка: якщо на Домівці довго нічого не натискали, запускаємо тихий камін. */
@@ -122,6 +144,7 @@ public class HomeActivity extends Activity {
                 return;
             }
             updateSleepInfo();
+            refreshWeather(false);
             main.postDelayed(this, 30_000);
         }
     };
@@ -141,14 +164,18 @@ public class HomeActivity extends Activity {
         final Drawable banner;
         final Drawable icon;
         final boolean leanback;
+        /** Основний колір іконки: фон плитки для застосунків без банера. */
+        final int color;
 
-        AppEntry(String pkg, ComponentName component, String label, Drawable banner, Drawable icon, boolean leanback) {
+        AppEntry(String pkg, ComponentName component, String label, Drawable banner, Drawable icon,
+                 boolean leanback, int color) {
             this.pkg = pkg;
             this.component = component;
             this.label = label;
             this.banner = banner;
             this.icon = icon;
             this.leanback = leanback;
+            this.color = color;
         }
     }
 
@@ -176,10 +203,13 @@ public class HomeActivity extends Activity {
         f.addDataScheme("package");
         registerReceiver(packageReceiver, f);
 
+        weather = Weather.cached(this);
+        updateWeatherMini();
         rebuildMainRow();
         rebuildSources();
         reloadApps();
         loadSources();
+        refreshWeather(false);
         main.post(this::focusConsole);
     }
 
@@ -188,8 +218,13 @@ public class HomeActivity extends Activity {
         super.onResume();
         resumed = true;
         App.homeResumed = true;
-        updateGreeting();
+        updateWallpaper();
         refreshSourceStates();
+        refreshWeather(false);
+        View focused = getCurrentFocus();
+        if (focused != null && heroActions.containsKey(focused)) {
+            heroActions.get(focused).run();
+        }
         updateSleepInfo();
         lastInteraction = System.currentTimeMillis();
         main.removeCallbacks(idleCheck);
@@ -217,6 +252,9 @@ public class HomeActivity extends Activity {
         resumed = false;
         App.homeResumed = false;
         main.removeCallbacks(idleCheck);
+        if (heroFire != null) {
+            heroFire.stop();
+        }
     }
 
     @Override
@@ -273,99 +311,127 @@ public class HomeActivity extends Activity {
     // ================================================================ інтерфейс
 
     private void buildUi() {
-        FrameLayout root = new FrameLayout(this);
+        rootView = new FrameLayout(this);
+        updateWallpaper();
 
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setClipChildren(false);
-        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        rootView.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setClipChildren(false);
         content.setClipToPadding(false);
-        content.setPadding(dp(SIDE), dp(36), dp(SIDE), dp(48));
+        content.setPadding(dp(SIDE), dp(26), dp(SIDE), dp(70));
         scroll.addView(content, new FrameLayout.LayoutParams(-1, -2));
 
-        // ---- шапка: привітання, годинник, налаштування
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-
-        LinearLayout titles = new LinearLayout(this);
-        titles.setOrientation(LinearLayout.VERTICAL);
-        greeting = text("", 30, TEXT, true);
-        titles.addView(greeting);
+        // ---- верхня смужка: дата | погода, годинник, таймер сну, налаштування
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
         TextClock date = new TextClock(this);
         date.setFormat12Hour("EEEE, d MMMM");
         date.setFormat24Hour("EEEE, d MMMM");
-        style(date, 17, TEXT_DIM, false);
-        titles.addView(date);
-        header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1f));
+        style(date, 18, TEXT_DIM, false);
+        top.addView(date, new LinearLayout.LayoutParams(0, -2, 1f));
 
-        LinearLayout clockCol = new LinearLayout(this);
-        clockCol.setOrientation(LinearLayout.VERTICAL);
-        clockCol.setGravity(Gravity.END);
+        weatherMiniIcon = new ImageView(this);
+        top.addView(weatherMiniIcon, new LinearLayout.LayoutParams(dp(26), dp(26)));
+        weatherMiniText = text("", 18, TEXT, false);
+        weatherMiniText.setPadding(dp(8), 0, dp(24), 0);
+        top.addView(weatherMiniText);
+
         TextClock clock = new TextClock(this);
         clock.setFormat12Hour("HH:mm");
         clock.setFormat24Hour("HH:mm");
-        style(clock, 46, TEXT, false);
-        clock.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
-        clockCol.addView(clock);
-        sleepInfo = text("", 14, Color.rgb(255, 196, 120), false);
+        style(clock, 24, TEXT, false);
+        top.addView(clock);
+        sleepInfo = text("", 14, WARM, false);
+        sleepInfo.setPadding(dp(14), 0, 0, 0);
         sleepInfo.setVisibility(View.GONE);
-        clockCol.addView(sleepInfo);
-        header.addView(clockCol);
+        top.addView(sleepInfo);
 
-        View sleep = iconButton(R.drawable.ic_moon, "Таймер сну");
+        View sleep = iconButton(R.drawable.ic_moon, "Таймер сну", () -> {
+            String st = SleepTimer.status(this);
+            setHero("Таймер сну", st != null ? "Телевізор: " + st
+                    : "Телевізор вимкнеться сам через 10–120 хвилин", "OK: вибрати час");
+            setHeroArt(getDrawable(R.drawable.ic_moon), 150, 150, false);
+            setHeroGlow(0x553D5AFE);
+        });
         sleep.setOnClickListener(v -> SleepTimer.show(this, this::updateSleepInfo));
-        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(56), dp(56));
-        mp.leftMargin = dp(28);
-        header.addView(sleep, mp);
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(46), dp(46));
+        mp.leftMargin = dp(24);
+        top.addView(sleep, mp);
 
-        View settings = iconButton(R.drawable.ic_tune, "Налаштування");
+        View settings = iconButton(R.drawable.ic_tune, "Налаштування", () -> {
+            setHero("Налаштування", "Пам'ять, заставка, погода, приховані застосунки, таймер сну",
+                    "OK: відкрити");
+            setHeroArt(getDrawable(R.drawable.ic_tune), 150, 150, false);
+            setHeroGlow(0x557C5CFF);
+        });
         settings.setOnClickListener(v -> showLauncherSettings());
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(56), dp(56));
-        sp.leftMargin = dp(14);
-        header.addView(settings, sp);
-        content.addView(header);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(46), dp(46));
+        sp.leftMargin = dp(12);
+        top.addView(settings, sp);
+        content.addView(top);
 
-        // ---- Головне
-        content.addView(sectionTitle("Головне"));
+        // ---- вітрина
+        hero = new FrameLayout(this);
+        hero.setClipChildren(false);
+        heroGlow = new View(this);
+        hero.addView(heroGlow, new FrameLayout.LayoutParams(-1, -1));
+
+        heroFire = new FireView(this);
+        heroFire.setBare(true);
+        heroFire.setVisibility(View.GONE);
+        hero.addView(heroFire, new FrameLayout.LayoutParams(dp(520), -1, Gravity.END));
+
+        heroArt = new ImageView(this);
+        heroArt.setVisibility(View.GONE);
+        hero.addView(heroArt, new FrameLayout.LayoutParams(dp(384), dp(216), Gravity.END | Gravity.CENTER_VERTICAL));
+
+        heroText = new LinearLayout(this);
+        heroText.setOrientation(LinearLayout.VERTICAL);
+        heroText.setGravity(Gravity.CENTER_VERTICAL);
+        heroTitle = text("", 46, TEXT, true);
+        heroTitle.setSingleLine(true);
+        heroTitle.setEllipsize(TextUtils.TruncateAt.END);
+        heroText.addView(heroTitle);
+        heroSub = text("", 19, TEXT_DIM, false);
+        heroSub.setMaxLines(2);
+        heroSub.setPadding(0, dp(6), 0, 0);
+        heroText.addView(heroSub);
+        heroForecast = new LinearLayout(this);
+        heroForecast.setOrientation(LinearLayout.HORIZONTAL);
+        heroForecast.setPadding(0, dp(18), 0, 0);
+        heroForecast.setVisibility(View.GONE);
+        heroText.addView(heroForecast);
+        heroHint = text("", 14, TEXT_HINT, false);
+        heroHint.setPadding(0, dp(18), 0, 0);
+        heroText.addView(heroHint);
+        hero.addView(heroText, new FrameLayout.LayoutParams(dp(660), -1, Gravity.START));
+        content.addView(hero, new LinearLayout.LayoutParams(-1, dp(HERO_H)));
+
+        // ---- головний ряд плиток
         mainRow = row();
         content.addView(horizontal(mainRow));
 
-        // ---- Джерела
-        content.addView(sectionTitle("Джерела"));
-        sourcesRow = row();
-        content.addView(horizontal(sourcesRow));
-
-        // ---- Усі застосунки
+        // ---- усі застосунки
         content.addView(sectionTitle("Застосунки"));
         appsGrid = new GridLayout(this);
         appsGrid.setColumnCount(APP_COLUMNS);
         appsGrid.setClipChildren(false);
         appsGrid.setClipToPadding(false);
-        appsGrid.setPadding(0, dp(6), 0, 0);
         content.addView(appsGrid, new LinearLayout.LayoutParams(-1, -2));
 
-        setContentView(root);
-    }
+        // ---- джерела сигналу
+        content.addView(sectionTitle("Джерела"));
+        sourcesRow = row();
+        content.addView(horizontal(sourcesRow));
 
-    private void updateGreeting() {
-        int h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
-        String g;
-        if (h >= 5 && h < 12) {
-            g = "Добрий ранок";
-        } else if (h >= 12 && h < 18) {
-            g = "Добрий день";
-        } else if (h >= 18 && h < 23) {
-            g = "Добрий вечір";
-        } else {
-            g = "Доброї ночі";
-        }
-        greeting.setText(g);
+        setContentView(rootView);
     }
 
     private void scrollToTop() {
@@ -374,7 +440,7 @@ public class HomeActivity extends Activity {
     }
 
     private void focusConsole() {
-        View console = mainRow.findViewWithTag(TAG_CONSOLE);
+        View console = findByKey(mainRow, TAG_CONSOLE);
         if (console != null) {
             console.requestFocus();
         }
@@ -385,31 +451,43 @@ public class HomeActivity extends Activity {
     private void rebuildMainRow() {
         String focusKey = focusedKey();
         mainRow.removeAllViews();
+        clearHeroActions(mainRow);
 
-        mainRow.addView(consoleTile(), tileParams(CONSOLE_W, TILE_H));
+        mainRow.addView(consoleTile(), wrapParams());
 
-        View fireTile = tile(PIN_W, new int[]{0xFFFF9A3C, 0xFFB3261E}, R.drawable.ic_fire, "Камін",
-                "вогонь і тріск дров");
-        fireTile.setTag(TAG_FIRE);
-        fireTile.setOnClickListener(v -> startActivity(new Intent(this, FireplaceActivity.class)));
-        mainRow.addView(fireTile, tileParams(PIN_W, TILE_H));
+        FrameLayout fire = iconCard(new int[]{0xFFFF9A3C, 0xFFB3261E}, R.drawable.ic_fire, null);
+        fire.setTag(TAG_FIRE);
+        fire.setOnClickListener(v -> startActivity(new Intent(this, FireplaceActivity.class)));
+        mainRow.addView(tileWrap(fire, "Камін", this::heroFireplace), wrapParams());
+
+        FrameLayout w = iconCard(new int[]{0xFF4FA3FF, 0xFF2747B8},
+                weather != null ? Weather.icon(weather.code, weather.isDay) : R.drawable.ic_w_partly,
+                weather != null ? Weather.temp(weather.temp) : null);
+        w.setTag(TAG_WEATHER);
+        w.setOnClickListener(v -> chooseCity());
+        mainRow.addView(tileWrap(w, "Погода", this::heroWeather), wrapParams());
 
         if (findYoutube() == null) {
-            View yt = tile(PIN_W, new int[]{0xFFE53935, 0xFF8E1B2C}, R.drawable.ic_play, "YouTube",
-                    "встановіть SmartTube");
+            FrameLayout yt = iconCard(new int[]{0xFFE53935, 0xFF8E1B2C}, R.drawable.ic_play, null);
+            yt.setTag(TAG_YOUTUBE);
             yt.setOnClickListener(v -> new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                     .setTitle("YouTube без реклами")
                     .setMessage("Скачайте SmartTube з офіційного сайту розробника, скиньте APK на флешку "
                             + "і встановіть. Плитка з'явиться тут сама.")
                     .setPositiveButton("Зрозуміло", null)
                     .show());
-            mainRow.addView(yt, tileParams(PIN_W, TILE_H));
+            mainRow.addView(tileWrap(yt, "YouTube", () -> {
+                setHero("YouTube", "Встановіть SmartTube: YouTube без реклами, зручний для пульта",
+                        "OK: як встановити");
+                setHeroArt(getDrawable(R.drawable.ic_play), 150, 150, false);
+                setHeroGlow(0x66E53935);
+            }), wrapParams());
         }
 
         for (String pkg : pinned()) {
             AppEntry app = findApp(pkg);
             if (app != null) {
-                mainRow.addView(pinnedTile(app), tileParams(PIN_W, TILE_H));
+                mainRow.addView(appTile(app), wrapParams());
             }
         }
         restoreFocus(mainRow, focusKey);
@@ -425,37 +503,38 @@ public class HomeActivity extends Activity {
     }
 
     private View consoleTile() {
-        View t = tile(CONSOLE_W, new int[]{0xFFFF2E63, 0xFF6A1FB0}, R.drawable.ic_gamepad, "Консоль",
-                consoleSubtitle());
-        t.setTag(TAG_CONSOLE);
-        t.setOnClickListener(v -> openConsole());
-        t.setOnLongClickListener(v -> {
+        FrameLayout card = iconCard(new int[]{0xFFFF2E63, 0xFF6A1FB0}, R.drawable.ic_gamepad, null);
+        card.setTag(TAG_CONSOLE);
+        card.setOnClickListener(v -> openConsole());
+        card.setOnLongClickListener(v -> {
             showConsoleMenu();
             return true;
         });
-        return t;
+        return tileWrap(card, "Консоль", this::heroConsole);
     }
 
-    private View pinnedTile(AppEntry app) {
-        View t;
+    /** Плитка застосунку: банер (для Android TV застосунків) або іконка на фоні її кольору. */
+    private View appTile(AppEntry app) {
+        FrameLayout card;
         if (app.banner != null) {
-            t = bannerCard(app, PIN_W, TILE_H);
+            card = baseCard(new int[]{0xFF222833, 0xFF222833});
+            ImageView banner = new ImageView(this);
+            banner.setImageDrawable(app.banner);
+            banner.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            card.addView(banner, new FrameLayout.LayoutParams(-1, -1));
         } else {
-            int[] colors = PALETTE[Math.abs(app.pkg.hashCode()) % PALETTE.length];
-            t = tile(PIN_W, colors, 0, app.label, null);
-            ImageView icon = t.findViewWithTag("icon");
-            if (icon != null) {
-                icon.setImageDrawable(app.icon);
-                icon.setColorFilter(null);
-            }
+            card = baseCard(new int[]{shade(app.color, 0.62f), shade(app.color, 0.38f)});
+            ImageView icon = new ImageView(this);
+            icon.setImageDrawable(app.icon);
+            card.addView(icon, new FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER));
         }
-        t.setTag(app);
-        t.setOnClickListener(v -> launch(app));
-        t.setOnLongClickListener(v -> {
+        card.setTag(app);
+        card.setOnClickListener(v -> launch(app));
+        card.setOnLongClickListener(v -> {
             showAppMenu(app);
             return true;
         });
-        return t;
+        return tileWrap(card, app.label, () -> heroApp(app));
     }
 
     // ---------------------------------------------------------------- Джерела
@@ -484,18 +563,22 @@ public class HomeActivity extends Activity {
     private void rebuildSources() {
         String focusKey = focusedKey();
         sourcesRow.removeAllViews();
+        clearHeroActions(sourcesRow);
         for (CvteTv.Source s : sources) {
             boolean tv = isTvSource(s);
             if (!s.isHdmi() && !tv) {
                 continue; // AV, VGA, YPbPr на цьому телевізорі не потрібні
             }
-            String title = tv ? "Телебачення" : s.name;
-            String sub = tv ? "антена" : stateText(s.id);
-            if (s.id == consoleSourceId()) {
-                sub = "консоль  ·  " + sub;
-            }
-            View chip = chip(tv ? R.drawable.ic_tv : R.drawable.ic_hdmi, title, sub,
-                    !tv && isConnected(s.id));
+            final String title = tv ? "Телебачення" : s.name;
+            String state = tv ? "антена" : stateText(s.id);
+            final String sub = s.id == consoleSourceId() ? "консоль  ·  " + state : state;
+            final int iconRes = tv ? R.drawable.ic_tv : R.drawable.ic_hdmi;
+            View chip = chip(iconRes, title, sub, !tv && isConnected(s.id), () -> {
+                setHero(title, sub.substring(0, 1).toUpperCase(Locale.ROOT) + sub.substring(1),
+                        "OK: перейти на цей вхід   ·   Menu: вибрати HDMI для консолі");
+                setHeroArt(getDrawable(iconRes), 150, 150, false);
+                setHeroGlow(0x5538B8B0);
+            });
             chip.setTag("src:" + s.id);
             final int id = s.id;
             chip.setOnClickListener(v -> openSource(id));
@@ -503,12 +586,16 @@ public class HomeActivity extends Activity {
                 showConsoleMenu();
                 return true;
             });
-            sourcesRow.addView(chip, tileParams(210, 78));
+            sourcesRow.addView(chip, chipParams());
         }
         if (sourcesRow.getChildCount() == 0) {
-            View chip = chip(R.drawable.ic_tv, "ТВ-екран", "поточне джерело", false);
+            View chip = chip(R.drawable.ic_tv, "ТВ-екран", "поточне джерело", false, () -> {
+                setHero("ТВ-екран", "Відкрити поточне джерело сигналу", "OK: відкрити");
+                setHeroArt(getDrawable(R.drawable.ic_tv), 150, 150, false);
+                setHeroGlow(0x5538B8B0);
+            });
             chip.setOnClickListener(v -> openSource(-1));
-            sourcesRow.addView(chip, tileParams(210, 78));
+            sourcesRow.addView(chip, chipParams());
         }
         restoreFocus(sourcesRow, focusKey);
     }
@@ -592,12 +679,9 @@ public class HomeActivity extends Activity {
             return;
         }
         rebuildSources();
-        View console = mainRow.findViewWithTag(TAG_CONSOLE);
-        if (console != null) {
-            View sub = console.findViewWithTag("sub");
-            if (sub instanceof TextView) {
-                ((TextView) sub).setText(consoleSubtitle());
-            }
+        View f = getCurrentFocus();
+        if (f != null && TAG_CONSOLE.equals(f.getTag())) {
+            heroConsole();
         }
     }
 
@@ -779,59 +863,27 @@ public class HomeActivity extends Activity {
                 icon = null;
             }
             String label = String.valueOf(ri.loadLabel(pm));
+            int color = banner == null && icon != null ? iconColor(icon) : 0xFF2A3350;
             out.put(ai.packageName, new AppEntry(ai.packageName,
-                    new ComponentName(ai.packageName, ai.name), label, banner, icon, leanback));
+                    new ComponentName(ai.packageName, ai.name), label, banner, icon, leanback, color));
         }
     }
 
     private void rebuildApps() {
         String focusKey = focusedKey();
         appsGrid.removeAllViews();
+        clearHeroActions(appsGrid);
         Set<String> hidden = hidden();
         for (AppEntry app : apps) {
             if (hidden.contains(app.pkg)) {
                 continue;
             }
-            View card = appCard(app);
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
-            lp.width = dp(APP_W);
-            lp.height = dp(APP_H);
-            lp.rightMargin = dp(GAP);
-            lp.bottomMargin = dp(GAP);
-            appsGrid.addView(card, lp);
+            lp.rightMargin = dp(TILE_GAP);
+            lp.bottomMargin = dp(6);
+            appsGrid.addView(appTile(app), lp);
         }
         restoreFocus(appsGrid, focusKey);
-    }
-
-    private View appCard(AppEntry app) {
-        View card;
-        if (app.banner != null) {
-            card = bannerCard(app, APP_W, APP_H);
-        } else {
-            FrameLayout f = baseCard(new int[]{CARD, CARD});
-            LinearLayout col = new LinearLayout(this);
-            col.setOrientation(LinearLayout.VERTICAL);
-            col.setGravity(Gravity.CENTER);
-            col.setPadding(dp(8), dp(8), dp(8), dp(6));
-            ImageView icon = new ImageView(this);
-            icon.setImageDrawable(app.icon);
-            col.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
-            TextView label = text(app.label, 13, TEXT, false);
-            label.setGravity(Gravity.CENTER);
-            label.setSingleLine(true);
-            label.setEllipsize(TextUtils.TruncateAt.END);
-            label.setPadding(0, dp(6), 0, 0);
-            col.addView(label, new LinearLayout.LayoutParams(-1, -2));
-            f.addView(col, new FrameLayout.LayoutParams(-1, -1));
-            card = f;
-        }
-        card.setTag(app);
-        card.setOnClickListener(v -> launch(app));
-        card.setOnLongClickListener(v -> {
-            showAppMenu(app);
-            return true;
-        });
-        return card;
     }
 
     private void launch(AppEntry app) {
@@ -963,6 +1015,9 @@ public class HomeActivity extends Activity {
                     : "Після ввімкнення: як вирішить прошивка");
         });
 
+        items.add("Місто для погоди: " + Weather.CITY_NAMES[Weather.cityIndex(this)]);
+        actions.add(this::chooseCity);
+
         items.add("Приховані застосунки (" + hidden.size() + ")");
         actions.add(this::showHiddenApps);
 
@@ -974,7 +1029,7 @@ public class HomeActivity extends Activity {
 
         items.add("Про Домівку");
         actions.add(() -> new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Домівка 1.4")
+                .setTitle("Домівка 2.0")
                 .setMessage("Легкий головний екран для телевізора Bravis.\n\n"
                         + "Menu або довге натискання на плитці: меню плитки.\n"
                         + "Source: перейти до джерел.\n"
@@ -1193,12 +1248,246 @@ public class HomeActivity extends Activity {
 
     // ================================================================ «цеглинки» інтерфейсу
 
+    /** Картка з градієнтом, обведенням у фокусі та плавним збільшенням. */
+    /** Велика плитка: іконка зверху, назва і підпис знизу. */
+    /** Картка з банером застосунку (для Android TV застосунків). */
+    /** Невелика плашка джерела сигналу. */
+    // ================================================================ вітрина
+
+    private void setHero(String title, String sub, String hint) {
+        setHeroFire(false);
+        heroTitle.setText(title);
+        heroSub.setText(sub == null ? "" : sub);
+        heroSub.setVisibility(sub == null ? View.GONE : View.VISIBLE);
+        heroHint.setText(hint == null ? "" : hint);
+        heroHint.setVisibility(hint == null ? View.GONE : View.VISIBLE);
+        heroForecast.setVisibility(View.GONE);
+        heroText.animate().cancel();
+        heroText.setAlpha(0f);
+        heroText.setTranslationX(-dp(14));
+        heroText.animate().alpha(1f).translationX(0).setDuration(220).start();
+    }
+
+    /** Картинка праворуч у вітрині: банер застосунку (картка) або велика іконка. */
+    private void setHeroArt(Drawable d, int wDp, int hDp, boolean card) {
+        heroArt.animate().cancel();
+        if (d == null) {
+            heroArt.setVisibility(View.GONE);
+            return;
+        }
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) heroArt.getLayoutParams();
+        lp.width = dp(wDp);
+        lp.height = dp(hDp);
+        lp.rightMargin = dp(card ? 24 : 80);
+        heroArt.setLayoutParams(lp);
+        heroArt.setImageDrawable(d);
+        if (card) {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(dp(18));
+            bg.setColor(0xFF222833);
+            heroArt.setBackground(bg);
+            heroArt.setClipToOutline(true);
+            heroArt.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            heroArt.setElevation(dp(14));
+        } else {
+            heroArt.setBackground(null);
+            heroArt.setClipToOutline(false);
+            heroArt.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            heroArt.setElevation(0);
+        }
+        heroArt.setVisibility(View.VISIBLE);
+        heroArt.setAlpha(0f);
+        heroArt.setScaleX(0.94f);
+        heroArt.setScaleY(0.94f);
+        heroArt.animate().alpha(card ? 1f : 0.92f).scaleX(1f).scaleY(1f).setDuration(280).start();
+    }
+
+    /** М'яке кольорове сяйво за картинкою вітрини. */
+    private void setHeroGlow(int color) {
+        GradientDrawable g = new GradientDrawable();
+        g.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        g.setColors(new int[]{color, color & 0x00FFFFFF});
+        g.setGradientCenter(0.8f, 0.5f);
+        g.setGradientRadius(dp(430));
+        heroGlow.setBackground(g);
+    }
+
+    private void setHeroFire(boolean on) {
+        if (heroFire == null) {
+            return;
+        }
+        if (on) {
+            heroFire.setVisibility(View.VISIBLE);
+            heroFire.start();
+        } else {
+            heroFire.stop();
+            heroFire.setVisibility(View.GONE);
+        }
+    }
+
+    private void heroConsole() {
+        setHero("Консоль", consoleSubtitle(), "OK: грати   ·   Menu: вибрати HDMI і автоперемикання");
+        setHeroArt(getDrawable(R.drawable.ic_gamepad), 190, 190, false);
+        setHeroGlow(0x66FF2E63);
+    }
+
+    private void heroFireplace() {
+        int saver = prefs.getInt(P_SAVER, 10);
+        setHero("Камін", "Живий вогонь, жаринки і тріск дров на весь екран",
+                "OK: запалити" + (saver > 0 ? "   ·   як заставка вмикається через " + saver + " хв" : ""));
+        setHeroArt(null, 0, 0, false);
+        setHeroGlow(0x66FF7A2E);
+        setHeroFire(true);
+    }
+
+    private void heroWeather() {
+        setHeroGlow(0x553D8BFF);
+        if (weather == null) {
+            setHero("Погода", weatherLoading ? "Завантажую прогноз..." : "Немає даних: потрібен інтернет",
+                    "OK: вибрати місто");
+            setHeroArt(getDrawable(R.drawable.ic_w_partly), 160, 160, false);
+            return;
+        }
+        setHero(weather.city + "   " + Weather.temp(weather.temp),
+                Weather.describe(weather.code) + ", відчувається як " + Weather.temp(weather.feels)
+                        + ", вітер " + weather.wind + " м/с",
+                "OK: вибрати місто");
+        heroForecast.removeAllViews();
+        int n = Math.min(5, weather.days.length);
+        for (int k = 0; k < n; k++) {
+            Weather.Day d = weather.days[k];
+            LinearLayout col = new LinearLayout(this);
+            col.setOrientation(LinearLayout.VERTICAL);
+            col.setGravity(Gravity.CENTER_HORIZONTAL);
+            col.setPadding(0, 0, dp(30), 0);
+            col.addView(text(k == 0 ? "Сьогодні" : Weather.dayName(d.dayOfWeek), 14, TEXT_DIM, true));
+            ImageView ic = new ImageView(this);
+            ic.setImageResource(Weather.icon(d.code, true));
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(34), dp(34));
+            ip.topMargin = dp(4);
+            ip.bottomMargin = dp(4);
+            col.addView(ic, ip);
+            col.addView(text(Weather.temp(d.max) + " / " + Weather.temp(d.min), 14, TEXT, false));
+            heroForecast.addView(col);
+        }
+        heroForecast.setVisibility(n > 0 ? View.VISIBLE : View.GONE);
+        setHeroArt(getDrawable(Weather.icon(weather.code, weather.isDay)), 170, 170, false);
+    }
+
+    private void heroApp(AppEntry app) {
+        boolean pinned = pinned().contains(app.pkg);
+        int launches = prefs.getInt(P_LAUNCH_PREFIX + app.pkg, 0);
+        String sub = (pinned ? "У головному ряду" : "Застосунок")
+                + (launches > 0 ? "  ·  відкривали " + launches + " " + times(launches) : "");
+        setHero(app.label, sub, "OK: відкрити   ·   Menu: закріпити, посунути, сховати, видалити");
+        if (app.banner != null) {
+            setHeroArt(copy(app.banner), 384, 216, true);
+        } else {
+            setHeroArt(copy(app.icon), 150, 150, false);
+        }
+        setHeroGlow((app.color & 0x00FFFFFF) | 0x77000000);
+    }
+
+    private static String times(int n) {
+        int m100 = n % 100;
+        int m10 = n % 10;
+        if (m100 >= 11 && m100 <= 14) {
+            return "разів";
+        }
+        if (m10 == 1) {
+            return "раз";
+        }
+        return m10 >= 2 && m10 <= 4 ? "рази" : "разів";
+    }
+
+    // ================================================================ погода
+
+    private long lastWeatherAttempt;
+
+    private void refreshWeather(boolean force) {
+        long now = System.currentTimeMillis();
+        if (weatherLoading) {
+            return;
+        }
+        if (!force && (!Weather.isStale(this) || now - lastWeatherAttempt < 5 * 60_000L)) {
+            return;
+        }
+        lastWeatherAttempt = now;
+        weatherLoading = true;
+        final Context app = getApplicationContext();
+        new Thread(() -> {
+            final Weather.Data d = Weather.fetch(app);
+            main.post(() -> {
+                weatherLoading = false;
+                if (d != null) {
+                    weather = d;
+                } else if (force) {
+                    toast("Не вдалося оновити погоду: перевірте інтернет");
+                }
+                onWeatherChanged();
+            });
+        }, "weather").start();
+    }
+
+    private void updateWeatherMini() {
+        if (weather == null) {
+            weatherMiniIcon.setVisibility(View.GONE);
+            weatherMiniText.setText("");
+            return;
+        }
+        weatherMiniIcon.setImageResource(Weather.icon(weather.code, weather.isDay));
+        weatherMiniIcon.setVisibility(View.VISIBLE);
+        weatherMiniText.setText(Weather.temp(weather.temp) + "  " + weather.city);
+    }
+
+    private void onWeatherChanged() {
+        updateWeatherMini();
+        rebuildMainRow();
+        View f = getCurrentFocus();
+        if (f != null && heroActions.containsKey(f)) {
+            heroActions.get(f).run();
+        }
+    }
+
+    private void chooseCity() {
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Місто для погоди")
+                .setSingleChoiceItems(Weather.CITY_NAMES, Weather.cityIndex(this), (d, which) -> {
+                    d.dismiss();
+                    Weather.setCity(this, which);
+                    weather = null;
+                    onWeatherChanged();
+                    refreshWeather(true);
+                })
+                .show();
+    }
+
+    // ================================================================ фон
+
+    private void updateWallpaper() {
+        if (rootView == null) {
+            return;
+        }
+        int h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
+        int bucket = h >= 6 && h < 11 ? 0 : h >= 11 && h < 17 ? 1 : h >= 17 && h < 22 ? 2 : 3;
+        if (bucket == wallpaperBucket) {
+            return;
+        }
+        wallpaperBucket = bucket;
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        BitmapDrawable wall = new BitmapDrawable(getResources(), Wallpaper.make(dm.widthPixels, dm.heightPixels));
+        wall.setFilterBitmap(true);
+        rootView.setBackground(wall);
+    }
+
+    // ================================================================ «цеглинки» інтерфейсу
+
     private LinearLayout row() {
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
         r.setClipChildren(false);
         r.setClipToPadding(false);
-        r.setPadding(0, dp(8), dp(24), dp(8));
+        r.setPadding(0, dp(14), dp(40), dp(8));
         return r;
     }
 
@@ -1207,103 +1496,127 @@ public class HomeActivity extends Activity {
         h.setHorizontalScrollBarEnabled(false);
         h.setClipChildren(false);
         h.setClipToPadding(false);
-        h.setFillViewport(false);
         h.addView(row);
         return h;
     }
 
     private TextView sectionTitle(String s) {
-        TextView t = text(s, 19, TEXT_DIM, true);
-        t.setPadding(dp(2), dp(26), 0, dp(4));
+        TextView t = text(s, 18, TEXT_DIM, true);
+        t.setPadding(dp(2), dp(30), 0, dp(4));
         return t;
     }
 
-    private LinearLayout.LayoutParams tileParams(int wDp, int hDp) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(wDp), dp(hDp));
-        lp.rightMargin = dp(GAP);
+    private LinearLayout.LayoutParams wrapParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.rightMargin = dp(TILE_GAP);
         return lp;
     }
 
-    /** Картка з градієнтом, обведенням у фокусі та плавним збільшенням. */
+    private LinearLayout.LayoutParams chipParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(220), dp(66));
+        lp.rightMargin = dp(20);
+        return lp;
+    }
+
     private FrameLayout baseCard(int[] colors) {
+        return baseCard(colors, 16);
+    }
+
+    /** Картка: заокруглена, з тінню; у фокусі — відблиск і тонка світла рамка. */
+    private FrameLayout baseCard(int[] colors, int radiusDp) {
         FrameLayout f = new FrameLayout(this);
         GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TL_BR, colors);
-        bg.setCornerRadius(dp(16));
+        bg.setCornerRadius(dp(radiusDp));
         f.setBackground(bg);
         f.setClipToOutline(true);
-        f.setForeground(focusRing(16));
+        f.setElevation(dp(3));
+        f.setForeground(shine(radiusDp));
         f.setFocusable(true);
         f.setClickable(true);
-        f.setOnFocusChangeListener((v, has) -> {
-            float s = has ? 1.07f : 1f;
-            v.animate().scaleX(s).scaleY(s).translationZ(has ? dp(10) : 0).setDuration(140).start();
-        });
         return f;
     }
 
-    private Drawable focusRing(int radiusDp) {
-        GradientDrawable ring = new GradientDrawable();
-        ring.setCornerRadius(dp(radiusDp));
-        ring.setColor(Color.TRANSPARENT);
-        ring.setStroke(dp(3), Color.WHITE);
+    private Drawable shine(int radiusDp) {
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{0x50FFFFFF, 0x08FFFFFF, 0x00FFFFFF});
+        g.setCornerRadius(dp(radiusDp));
+        g.setStroke(dp(2), 0x90FFFFFF);
         StateListDrawable states = new StateListDrawable();
-        states.addState(new int[]{android.R.attr.state_focused}, ring);
+        states.addState(new int[]{android.R.attr.state_focused}, g);
         states.addState(new int[]{}, new ColorDrawable(Color.TRANSPARENT));
         return states;
     }
 
-    /** Велика плитка: іконка зверху, назва і підпис знизу. */
-    private FrameLayout tile(int wDp, int[] colors, int iconRes, String title, String subtitle) {
+    /** Плитка з великою іконкою (і, за бажання, підписом поруч, наприклад температурою). */
+    private FrameLayout iconCard(int[] colors, int iconRes, String badge) {
         FrameLayout f = baseCard(colors);
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(20), dp(18), dp(20), dp(16));
-
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER);
         ImageView icon = new ImageView(this);
-        icon.setTag("icon");
-        if (iconRes != 0) {
-            icon.setImageResource(iconRes);
+        icon.setImageResource(iconRes);
+        r.addView(icon, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        if (badge != null) {
+            TextView b = text(badge, 30, TEXT, false);
+            b.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+            b.setPadding(dp(10), 0, 0, 0);
+            r.addView(b);
         }
-        col.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        f.addView(r, new FrameLayout.LayoutParams(-1, -1));
+        return f;
+    }
 
-        View spacer = new View(this);
-        col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
-
-        TextView t = text(title, 22, TEXT, true);
+    /**
+     * Плитка у стилі Apple TV: картка піднімається, збільшується і відкидає тінь,
+     * а підпис під нею видно лише у фокусі. Вітрина при цьому показує цю плитку.
+     */
+    private LinearLayout tileWrap(FrameLayout card, String label, Runnable heroAction) {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setGravity(Gravity.CENTER_HORIZONTAL);
+        wrap.setClipChildren(false);
+        wrap.setClipToPadding(false);
+        wrap.addView(card, new LinearLayout.LayoutParams(dp(TILE_W), dp(TILE_H)));
+        final TextView t = text(label, 15, TEXT, true);
         t.setSingleLine(true);
         t.setEllipsize(TextUtils.TruncateAt.END);
-        col.addView(t);
-        if (subtitle != null) {
-            TextView s = text(subtitle, 14, Color.argb(220, 255, 255, 255), false);
-            s.setTag("sub");
-            s.setSingleLine(true);
-            s.setEllipsize(TextUtils.TruncateAt.END);
-            col.addView(s);
-        }
-        f.addView(col, new FrameLayout.LayoutParams(-1, -1));
-        return f;
+        t.setGravity(Gravity.CENTER);
+        t.setAlpha(0f);
+        t.setPadding(0, dp(12), 0, dp(4));
+        wrap.addView(t, new LinearLayout.LayoutParams(dp(TILE_W + 20), -2));
+        heroActions.put(card, heroAction);
+        card.setOnFocusChangeListener((v, has) -> {
+            float s = has ? 1.12f : 1f;
+            v.animate().scaleX(s).scaleY(s).translationZ(has ? dp(20) : 0).setDuration(170).start();
+            t.animate().alpha(has ? 1f : 0f).translationY(has ? dp(7) : 0).setDuration(170).start();
+            if (has && heroAction != null) {
+                heroAction.run();
+            }
+        });
+        return wrap;
     }
 
-    /** Картка з банером застосунку (для Android TV застосунків). */
-    private FrameLayout bannerCard(AppEntry app, int wDp, int hDp) {
-        FrameLayout f = baseCard(new int[]{CARD, CARD});
-        ImageView banner = new ImageView(this);
-        banner.setImageDrawable(app.banner);
-        banner.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        f.addView(banner, new FrameLayout.LayoutParams(-1, -1));
-        return f;
+    private void liftOnFocus(View v, float scale, Runnable heroAction) {
+        heroActions.put(v, heroAction);
+        v.setOnFocusChangeListener((x, has) -> {
+            float s = has ? scale : 1f;
+            x.animate().scaleX(s).scaleY(s).translationZ(has ? dp(14) : 0).setDuration(160).start();
+            if (has && heroAction != null) {
+                heroAction.run();
+            }
+        });
     }
 
-    /** Невелика плашка джерела сигналу. */
-    private View chip(int iconRes, String title, String subtitle, boolean connected) {
-        FrameLayout f = baseCard(new int[]{CARD, CARD});
+    /** Плашка джерела сигналу (скляна, заокруглена). */
+    private View chip(int iconRes, String title, String subtitle, boolean connected, Runnable heroAction) {
+        FrameLayout f = baseCard(new int[]{GLASS, GLASS}, 20);
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
         r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(dp(16), 0, dp(12), 0);
+        r.setPadding(dp(18), 0, dp(12), 0);
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
-        r.addView(icon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        r.addView(icon, new LinearLayout.LayoutParams(dp(28), dp(28)));
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(dp(14), 0, 0, 0);
@@ -1316,17 +1629,97 @@ public class HomeActivity extends Activity {
         col.addView(s);
         r.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
         f.addView(r, new FrameLayout.LayoutParams(-1, -1));
+        liftOnFocus(f, 1.08f, heroAction);
         return f;
     }
 
-    private View iconButton(int iconRes, String description) {
-        FrameLayout f = baseCard(new int[]{CARD, CARD});
+    /** Кругла скляна кнопка у верхній смужці. */
+    private View iconButton(int iconRes, String description, Runnable heroAction) {
+        FrameLayout f = baseCard(new int[]{GLASS, GLASS}, 23);
         f.setContentDescription(description);
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER);
-        f.addView(icon, lp);
+        f.addView(icon, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
+        liftOnFocus(f, 1.15f, heroAction);
         return f;
+    }
+
+    /** Прибрати дії вітрини для плиток, яких уже немає на екрані. */
+    private void clearHeroActions(ViewGroup ignored) {
+        Iterator<View> it = heroActions.keySet().iterator();
+        while (it.hasNext()) {
+            if (!inTree(it.next())) {
+                it.remove();
+            }
+        }
+    }
+
+    private boolean inTree(View v) {
+        ViewParent p = v.getParent();
+        while (p != null) {
+            if (p == rootView) {
+                return true;
+            }
+            p = p.getParent();
+        }
+        return false;
+    }
+
+    /** Окрема копія Drawable: один і той самий не можна показувати у двох місцях одночасно. */
+    private Drawable copy(Drawable d) {
+        if (d == null) {
+            return null;
+        }
+        Drawable.ConstantState cs = d.getConstantState();
+        return cs != null ? cs.newDrawable(getResources()).mutate() : d;
+    }
+
+    private static int shade(int color, float f) {
+        return Color.rgb((int) (Color.red(color) * f), (int) (Color.green(color) * f), (int) (Color.blue(color) * f));
+    }
+
+    /** Основний колір іконки: середній відтінок насичених пікселів. */
+    private static int iconColor(Drawable d) {
+        try {
+            Bitmap b = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(b);
+            Drawable.ConstantState cs = d.getConstantState();
+            Drawable dd = cs != null ? cs.newDrawable().mutate() : d;
+            dd.setBounds(0, 0, 16, 16);
+            dd.draw(c);
+            float[] hsv = new float[3];
+            double hx = 0;
+            double hy = 0;
+            double satSum = 0;
+            double wSum = 0;
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    int px = b.getPixel(x, y);
+                    if (Color.alpha(px) < 128) {
+                        continue;
+                    }
+                    Color.colorToHSV(px, hsv);
+                    double w = hsv[1] * hsv[2] + 0.02;
+                    double rad = Math.toRadians(hsv[0]);
+                    hx += Math.cos(rad) * w;
+                    hy += Math.sin(rad) * w;
+                    satSum += hsv[1] * w;
+                    wSum += w;
+                }
+            }
+            b.recycle();
+            if (wSum <= 0) {
+                return 0xFF2A3350;
+            }
+            float hue = (float) Math.toDegrees(Math.atan2(hy, hx));
+            if (hue < 0) {
+                hue += 360;
+            }
+            float sat = (float) Math.max(0.2, Math.min(0.85, satSum / wSum * 1.1));
+            return Color.HSVToColor(new float[]{hue, sat, 0.78f});
+        } catch (Throwable t) {
+            return 0xFF2A3350;
+        }
     }
 
     private TextView text(String value, float sp, int color, boolean medium) {
@@ -1361,20 +1754,39 @@ public class HomeActivity extends Activity {
         if (key == null) {
             return;
         }
-        for (int i = 0; i < container.getChildCount(); i++) {
-            View c = container.getChildAt(i);
-            Object tag = c.getTag();
-            String k = tag instanceof AppEntry ? "app:" + ((AppEntry) tag).pkg
-                    : tag instanceof String ? (String) tag : null;
-            if (key.equals(k)) {
-                c.requestFocus();
-                return;
-            }
+        View v = findByKey(container, key);
+        if (v != null) {
+            v.requestFocus();
+            return;
         }
         // Плитку з фокусом прибрали (наприклад, відкріпили): фокус на «Консоль»
         if (getCurrentFocus() == null) {
             focusConsole();
         }
+    }
+
+    private static String keyOf(View v) {
+        Object tag = v.getTag();
+        if (tag instanceof AppEntry) {
+            return "app:" + ((AppEntry) tag).pkg;
+        }
+        return tag instanceof String ? (String) tag : null;
+    }
+
+    private static View findByKey(ViewGroup root, String key) {
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View c = root.getChildAt(i);
+            if (key.equals(keyOf(c))) {
+                return c;
+            }
+            if (c instanceof ViewGroup) {
+                View found = findByKey((ViewGroup) c, key);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     private void toast(String s) {

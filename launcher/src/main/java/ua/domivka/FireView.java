@@ -75,6 +75,8 @@ final class FireView extends View {
     private final RectF[] logs = {new RectF(), new RectF(), new RectF()};
     private final float[] logAngles = {-7f, 6f, 0f};
     private float corner;
+    /** Лише вогонь і дрова, без каміна і фону: для превʼю на головному екрані. */
+    private boolean bare;
 
     FireView(Context context) {
         super(context);
@@ -87,6 +89,14 @@ final class FireView extends View {
         }
         logEdgePaint.setStyle(Paint.Style.STROKE);
         logEdgePaint.setStrokeCap(Paint.Cap.ROUND);
+    }
+
+    void setBare(boolean bare) {
+        this.bare = bare;
+        setBackgroundColor(bare ? Color.TRANSPARENT : Color.BLACK);
+        if (getWidth() > 0) {
+            onSizeChanged(getWidth(), getHeight(), getWidth(), getHeight());
+        }
     }
 
     void start() {
@@ -301,6 +311,20 @@ final class FireView extends View {
         vignettePaint.setShader(new RadialGradient(w * 0.5f, h * 0.55f, Math.max(w, h) * 0.78f,
                 new int[]{0x00000000, 0x00000000, 0xD0000000}, new float[]{0f, 0.55f, 1f},
                 Shader.TileMode.CLAMP));
+
+        if (bare) {
+            boxRect.set(0, 0, w, h);
+            fireRect.set(w * 0.08f, h * 0.0f, w * 0.92f, h * 0.9f);
+            float bh = h * 0.075f;
+            setLog(logs[0], w * 0.40f, h * 0.885f, w * 0.36f, bh);
+            setLog(logs[1], w * 0.60f, h * 0.885f, w * 0.36f, bh);
+            setLog(logs[2], w * 0.50f, h * 0.925f, w * 0.48f, bh * 1.1f);
+            logPaint.setShader(new LinearGradient(0, h * 0.84f, 0, h, 0xFF3E2414, 0xFF140A05, Shader.TileMode.CLAMP));
+            logEdgePaint.setStrokeWidth(h * 0.008f);
+            innerGlowPaint.setShader(new RadialGradient(w * 0.5f, h * 0.9f, w * 0.5f,
+                    new int[]{0xAAB0500F, 0x44601E06, 0x00000000}, new float[]{0f, 0.45f, 1f},
+                    Shader.TileMode.CLAMP));
+        }
     }
 
     private static void setLog(RectF r, float cx, float cy, float width, float height) {
@@ -319,14 +343,18 @@ final class FireView extends View {
 
         int w = getWidth();
         int h = getHeight();
-        c.drawRect(0, 0, w, h, wallPaint);
-        c.drawRoundRect(stoneRect, corner, corner, stonePaint);
-        c.drawRoundRect(mantelRect, corner * 0.4f, corner * 0.4f, mantelPaint);
+        if (!bare) {
+            c.drawRect(0, 0, w, h, wallPaint);
+            c.drawRoundRect(stoneRect, corner, corner, stonePaint);
+            c.drawRoundRect(mantelRect, corner * 0.4f, corner * 0.4f, mantelPaint);
+        }
 
         // Топка: темна, з теплим світлом від вогню
         c.save();
         c.clipRect(boxRect);
-        c.drawRoundRect(boxRect, corner, corner, boxPaint);
+        if (!bare) {
+            c.drawRoundRect(boxRect, corner, corner, boxPaint);
+        }
         innerGlowPaint.setAlpha(Math.min(255, (int) (200 * glow)));
         c.drawRect(boxRect, innerGlowPaint);
         c.drawBitmap(frame, null, fireRect, framePaint);
@@ -356,10 +384,12 @@ final class FireView extends View {
         }
         c.restore();
 
-        c.drawRoundRect(hearthRect, corner * 0.3f, corner * 0.3f, hearthPaint);
-        roomGlowPaint.setAlpha(Math.min(255, (int) (255 * glow)));
-        c.drawRect(0, 0, w, h, roomGlowPaint);
-        c.drawRect(0, 0, w, h, vignettePaint);
+        if (!bare) {
+            c.drawRoundRect(hearthRect, corner * 0.3f, corner * 0.3f, hearthPaint);
+            roomGlowPaint.setAlpha(Math.min(255, (int) (255 * glow)));
+            c.drawRect(0, 0, w, h, roomGlowPaint);
+            c.drawRect(0, 0, w, h, vignettePaint);
+        }
 
         if (running) {
             postInvalidateOnAnimation();

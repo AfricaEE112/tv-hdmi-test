@@ -8,6 +8,10 @@ $Adb = Join-Path $Here 'platform-tools\adb.exe'
 $IpFile = Join-Path $Here 'tv-ip.txt'
 $ListFile = Join-Path $Here 'bloat-list.txt'
 $RestoreFile = Join-Path $Here 'disabled-by-script.txt'
+$HiddenFile = Join-Path $Here 'hidden-by-script.txt'
+
+# Без цих пакетів com.google.android.gms падає з повідомленням про помилку.
+$GmsDeps = @('com.google.android.gsf', 'com.google.android.gsf.login', 'com.google.android.gsf.notouch')
 $script:Target = ''
 
 # Ці пакети скрипт не вимикає ніколи, навіть якщо вони потраплять у список.
@@ -143,9 +147,29 @@ function Invoke-Optimize {
         if ($r -match 'disabled') {
             Add-Content -Path $RestoreFile -Value $p
             Write-Host "  вимкнено: $p"
-        } else {
-            Write-Host "  не вдалося: $p ($r)"
+            continue
         }
+        # Деякі пакети (наприклад, сервіси Google) прошивка не дає вимкнути: пробуємо приховати
+        $h = Invoke-Sh "pm hide $p"
+        if ($h -match 'true') {
+            Add-Content -Path $HiddenFile -Value $p
+            Write-Host "  приховано: $p"
+        } else {
+            Write-Host "  не вдалося: $p"
+            Write-Host "     вимкнення: $r"
+            Write-Host "     приховання: $h"
+        }
+    }
+
+    # Якщо головний сервіс Google лишився працювати, а його залежності вимкнено,
+    # він падає з повідомленням. Тоді повертаємо залежності.
+    $active = Get-Packages
+    $off = Get-Packages '-d'
+    if (($active -contains 'com.google.android.gms') -and -not ($off -contains 'com.google.android.gms')) {
+        Write-Host ''
+        Write-Host 'Сервіс com.google.android.gms вимкнути не вдалося. Щоб він не падав з повідомленням,'
+        Write-Host 'вмикаю назад його залежності (Google Services Framework).'
+        foreach ($d in $GmsDeps) { Invoke-Sh "pm enable $d" | Out-Null }
     }
 
     Set-Animations '0.5'
@@ -175,6 +199,12 @@ function Invoke-Restore {
         Write-Host "  вмикаю: $p  $(Invoke-Sh "pm enable $p")"
     }
     if (Test-Path $RestoreFile) { Remove-Item $RestoreFile }
+    if (Test-Path $HiddenFile) {
+        foreach ($p in @(Get-Content $HiddenFile | Where-Object { $_ } | Select-Object -Unique)) {
+            Write-Host "  показую: $p  $(Invoke-Sh "pm unhide $p")"
+        }
+        Remove-Item $HiddenFile
+    }
     Set-Animations '1.0'
     Write-Host 'Готово: усе, що вимикав скрипт, знову увімкнено, анімації звичайні.'
 }
