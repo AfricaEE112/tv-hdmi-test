@@ -229,6 +229,12 @@ public class MainActivity extends Activity {
                 runDiagnostics();
             }
         });
+        addButton("Знайти заводське меню", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                runFactorySearch();
+            }
+        });
         addButton("Оновити список входів", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -514,6 +520,48 @@ public class MainActivity extends Activity {
             }
         }
         log("===== КІНЕЦЬ ДІАГНОСТИКИ =====");
+    }
+
+    /** Усі екрани пакетів CVTE / MediaTek і всього, що схоже на заводське меню або налагодження. */
+    private void runFactorySearch() {
+        PackageManager pm = getPackageManager();
+        String[] keywords = {"cvte", "fac", "factory", "debug", "adb", "mediatek", "mtk", "service", "menu"};
+        log("===== ПОШУК ЗАВОДСЬКОГО МЕНЮ =====");
+        List<PackageInfo> packages;
+        try {
+            packages = pm.getInstalledPackages(0);
+        } catch (Throwable t) {
+            log("помилка: " + t);
+            return;
+        }
+        for (PackageInfo p : packages) {
+            String pkgLower = p.packageName.toLowerCase(Locale.ROOT);
+            if (!containsAny(pkgLower, keywords)) {
+                continue;
+            }
+            String appLabel = p.applicationInfo != null ? String.valueOf(p.applicationInfo.loadLabel(pm)) : "?";
+            try {
+                PackageInfo full = pm.getPackageInfo(p.packageName, PackageManager.GET_ACTIVITIES);
+                int count = full.activities == null ? 0 : full.activities.length;
+                log("[" + appLabel + "] " + p.packageName + "  (екранів: " + count + ")");
+                if (full.activities == null) {
+                    continue;
+                }
+                int shown = 0;
+                for (ActivityInfo a : full.activities) {
+                    if (shown++ >= 40) {
+                        log("    ... (ще є)");
+                        break;
+                    }
+                    String shortName = a.name.startsWith(p.packageName)
+                            ? a.name.substring(p.packageName.length()) : a.name;
+                    log("    " + shortName + (a.exported ? "" : "  (прихована)"));
+                }
+            } catch (Throwable t) {
+                log("[" + appLabel + "] " + p.packageName + "  не вдалося прочитати: " + t.getClass().getSimpleName());
+            }
+        }
+        log("===== КІНЕЦЬ ПОШУКУ =====");
     }
 
     private void logDeviceInfo() {
