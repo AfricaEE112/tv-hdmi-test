@@ -39,6 +39,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Тестовий застосунок: показує, які входи (HDMI тощо) бачить Android,
@@ -64,7 +66,10 @@ public class MainActivity extends Activity {
     private TvInputManager tvInputManager;
     private TvView tvView;
     private LinearLayout panel;
+    private LinearLayout cvteButtons;
     private LinearLayout buttons;
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private ScrollView logScroll;
     private TextView logView;
     private TextView statusView;
@@ -96,6 +101,7 @@ public class MainActivity extends Activity {
             }
         }
         refreshInputs();
+        connectCvte();
     }
 
     @Override
@@ -110,6 +116,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        worker.shutdown();
         if (tvInputManager != null) {
             try {
                 tvInputManager.unregisterCallback(inputCallback);
@@ -135,9 +142,15 @@ public class MainActivity extends Activity {
         panel.addView(keyView);
 
         ScrollView buttonScroll = new ScrollView(this);
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        cvteButtons = new LinearLayout(this);
+        cvteButtons.setOrientation(LinearLayout.VERTICAL);
+        column.addView(cvteButtons, new LinearLayout.LayoutParams(MATCH, WRAP));
         buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.VERTICAL);
-        buttonScroll.addView(buttons, new FrameLayout.LayoutParams(MATCH, WRAP));
+        column.addView(buttons, new LinearLayout.LayoutParams(MATCH, WRAP));
+        buttonScroll.addView(column, new FrameLayout.LayoutParams(MATCH, WRAP));
         panel.addView(buttonScroll, new LinearLayout.LayoutParams(MATCH, 0, 1f));
 
         TextView logTitle = text("Журнал (виберіть його і гортайте вгору/вниз):", 13,
@@ -235,9 +248,104 @@ public class MainActivity extends Activity {
     }
 
     private void focusFirstButton() {
-        if (buttons.getChildCount() > 0) {
-            buttons.getChildAt(0).requestFocus();
+        for (LinearLayout container : new LinearLayout[]{cvteButtons, buttons}) {
+            for (int i = 0; i < container.getChildCount(); i++) {
+                View child = container.getChildAt(i);
+                if (child.isFocusable()) {
+                    child.requestFocus();
+                    return;
+                }
+            }
         }
+    }
+
+    // ---------------------------------------------------------------- CVTE (спосіб штатного лаунчера)
+
+    private void connectCvte() {
+        log("CVTE: підключаюсь до сервісу прошивки...");
+        CvteTv.connect(this, new CvteTv.Ready() {
+            @Override
+            public void onReady(boolean connected) {
+                if (!connected) {
+                    log("ПОМИЛКА CVTE: " + CvteTv.lastError);
+                    return;
+                }
+                log("CVTE: підключено.");
+                worker.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        final List<CvteTv.Source> sources = CvteTv.sources();
+                        final Integer current = CvteTv.currentId();
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                showCvteSources(sources, current);
+                            }
+                        });
+                    }
+                });
+            }
+        });
+    }
+
+    private void showCvteSources(List<CvteTv.Source> sources, Integer currentId) {
+        cvteButtons.removeAllViews();
+        log("CVTE: джерел " + sources.size() + ", поточне id=" + currentId
+                + (sources.isEmpty() && !CvteTv.lastError.isEmpty() ? " (" + CvteTv.lastError + ")" : ""));
+
+        TextView header = text("Спосіб CVTE (як у штатному лаунчері):", 14, Color.rgb(120, 255, 170));
+        header.setPadding(0, dp(6), 0, 0);
+        cvteButtons.addView(header);
+
+        for (final CvteTv.Source s : sources) {
+            log("  CVTE id=" + s.id + " | " + s.name + " | " + s.category + " | " + s.status);
+            if (!s.isHdmi()) {
+                continue;
+            }
+            String mark = currentId != null && currentId == s.id ? " - зараз" : "";
+            addButtonTo(cvteButtons, "CVTE: " + s.name + " на весь екран  (" + s.status + mark + ")",
+                    new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            openCvteSource(s.id, s.name);
+                        }
+                    });
+        }
+        addButtonTo(cvteButtons, "CVTE: відкрити ТВ-екран (поточне джерело)", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                log("CVTE: відкриваю ТВ-екран...");
+                if (!CvteTv.openTvScreen(MainActivity.this)) {
+                    log("ПОМИЛКА CVTE: " + CvteTv.lastError);
+                }
+            }
+        });
+
+        TextView other = text("Стандартний спосіб Android (для порівняння):", 14, Color.rgb(150, 160, 180));
+        other.setPadding(0, dp(12), 0, 0);
+        cvteButtons.addView(other);
+
+        focusFirstButton();
+    }
+
+    private void openCvteSource(final int id, final String name) {
+        log("CVTE: перемикаю на " + name + " (id=" + id + ")...");
+        worker.execute(new Runnable() {
+            @Override
+            public void run() {
+                final boolean switched = CvteTv.setSource(id);
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        log("CVTE: перемкнуто = " + switched
+                                + (switched ? "" : " (" + CvteTv.lastError + ")"));
+                        if (!CvteTv.openTvScreen(MainActivity.this)) {
+                            log("ПОМИЛКА CVTE: " + CvteTv.lastError);
+                        }
+                    }
+                });
+            }
+        });
     }
 
     // ---------------------------------------------------------------- HDMI
@@ -526,6 +634,10 @@ public class MainActivity extends Activity {
     }
 
     private void addButton(String label, View.OnClickListener listener) {
+        addButtonTo(buttons, label, listener);
+    }
+
+    private void addButtonTo(LinearLayout container, String label, View.OnClickListener listener) {
         Button b = new Button(this);
         b.setText(label);
         b.setAllCaps(false);
@@ -538,7 +650,7 @@ public class MainActivity extends Activity {
         b.setOnClickListener(listener);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP);
         lp.topMargin = dp(6);
-        buttons.addView(b, lp);
+        container.addView(b, lp);
     }
 
     private StateListDrawable focusBackground(int normal, int focused) {

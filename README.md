@@ -12,6 +12,14 @@
 - **«Діагностика»**: список лаунчерів, ТВ-застосунків і їхніх внутрішніх екранів;
 - показує код кожної натиснутої кнопки пульта (щоб дізнатися код Source).
 
+## Спосіб CVTE
+
+Стандартний TvView на цій прошивці HDMI не показує. Тому застосунок, як і штатний
+лаунчер, перемикає джерело через сервіс прошивки `com.cvte.tv.api.impl` і відкриває
+рідний повноекранний ТВ-екран `com.cvte.tv.androidsetting/.TvSettingActivity`.
+Спосіб взято з MIT-проєкту
+[cvte-android-tv-launcher](https://github.com/Koqpe/cvte-android-tv-launcher).
+
 ## Збірка
 
 APK збирає GitHub Actions при кожному push у `main`.
