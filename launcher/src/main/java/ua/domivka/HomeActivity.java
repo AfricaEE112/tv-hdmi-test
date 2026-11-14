@@ -95,6 +95,9 @@ public class HomeActivity extends Activity {
     };
 
     private static final String TAG_CONSOLE = "console";
+    private static final String TAG_FIRE = "fire";
+    private static final String P_SAVER = "saver_minutes";
+    private static final int[] SAVER_OPTIONS = {5, 10, 20, 30, 0};
 
     private SharedPreferences prefs;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -104,6 +107,24 @@ public class HomeActivity extends Activity {
 
     private ScrollView scroll;
     private TextView greeting;
+    private TextView sleepInfo;
+    private long lastInteraction;
+
+    /** Заставка: якщо на Домівці довго нічого не натискали, запускаємо тихий камін. */
+    private final Runnable idleCheck = new Runnable() {
+        @Override
+        public void run() {
+            int minutes = prefs.getInt(P_SAVER, 10);
+            if (resumed && minutes > 0
+                    && System.currentTimeMillis() - lastInteraction >= minutes * 60_000L) {
+                startActivity(new Intent(HomeActivity.this, FireplaceActivity.class)
+                        .putExtra(FireplaceActivity.EXTRA_SCREENSAVER, true));
+                return;
+            }
+            updateSleepInfo();
+            main.postDelayed(this, 30_000);
+        }
+    };
     private LinearLayout mainRow;
     private LinearLayout sourcesRow;
     private GridLayout appsGrid;
@@ -169,6 +190,25 @@ public class HomeActivity extends Activity {
         App.homeResumed = true;
         updateGreeting();
         refreshSourceStates();
+        updateSleepInfo();
+        lastInteraction = System.currentTimeMillis();
+        main.removeCallbacks(idleCheck);
+        main.postDelayed(idleCheck, 30_000);
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        lastInteraction = System.currentTimeMillis();
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void updateSleepInfo() {
+        if (sleepInfo == null) {
+            return;
+        }
+        String st = SleepTimer.status(this);
+        sleepInfo.setText(st == null ? "" : st);
+        sleepInfo.setVisibility(st == null ? View.GONE : View.VISIBLE);
     }
 
     @Override
@@ -176,6 +216,7 @@ public class HomeActivity extends Activity {
         super.onPause();
         resumed = false;
         App.homeResumed = false;
+        main.removeCallbacks(idleCheck);
     }
 
     @Override
@@ -263,17 +304,30 @@ public class HomeActivity extends Activity {
         titles.addView(date);
         header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1f));
 
+        LinearLayout clockCol = new LinearLayout(this);
+        clockCol.setOrientation(LinearLayout.VERTICAL);
+        clockCol.setGravity(Gravity.END);
         TextClock clock = new TextClock(this);
         clock.setFormat12Hour("HH:mm");
         clock.setFormat24Hour("HH:mm");
         style(clock, 46, TEXT, false);
         clock.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
-        header.addView(clock);
+        clockCol.addView(clock);
+        sleepInfo = text("", 14, Color.rgb(255, 196, 120), false);
+        sleepInfo.setVisibility(View.GONE);
+        clockCol.addView(sleepInfo);
+        header.addView(clockCol);
+
+        View sleep = iconButton(R.drawable.ic_moon, "Таймер сну");
+        sleep.setOnClickListener(v -> SleepTimer.show(this, this::updateSleepInfo));
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(56), dp(56));
+        mp.leftMargin = dp(28);
+        header.addView(sleep, mp);
 
         View settings = iconButton(R.drawable.ic_tune, "Налаштування");
         settings.setOnClickListener(v -> showLauncherSettings());
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(56), dp(56));
-        sp.leftMargin = dp(28);
+        sp.leftMargin = dp(14);
         header.addView(settings, sp);
         content.addView(header);
 
@@ -333,6 +387,12 @@ public class HomeActivity extends Activity {
         mainRow.removeAllViews();
 
         mainRow.addView(consoleTile(), tileParams(CONSOLE_W, TILE_H));
+
+        View fireTile = tile(PIN_W, new int[]{0xFFFF9A3C, 0xFFB3261E}, R.drawable.ic_fire, "Камін",
+                "вогонь і тріск дров");
+        fireTile.setTag(TAG_FIRE);
+        fireTile.setOnClickListener(v -> startActivity(new Intent(this, FireplaceActivity.class)));
+        mainRow.addView(fireTile, tileParams(PIN_W, TILE_H));
 
         if (findYoutube() == null) {
             View yt = tile(PIN_W, new int[]{0xFFE53935, 0xFF8E1B2C}, R.drawable.ic_play, "YouTube",
@@ -867,51 +927,66 @@ public class HomeActivity extends Activity {
         final Set<String> hidden = hidden();
         final boolean auto = prefs.getBoolean(P_AUTO, true);
         final boolean powerOn = prefs.getBoolean(App.P_POWER_ON_HOME, true);
-        String[] items = {
-                "Звільнити пам'ять  (вільно " + freeMemoryMb() + " МБ)",
-                "Налаштування телевізора",
-                "Автоперемикання на консоль: " + (auto ? "увімкнено" : "вимкнено"),
-                "Приховані застосунки (" + hidden.size() + ")",
-                "Після ввімкнення ТВ відкривати Домівку: " + (powerOn ? "так" : "ні"),
-                "Заводське меню (увімкнути ADB)",
-                "Про Домівку",
-        };
+        final int saver = prefs.getInt(P_SAVER, 10);
+        final List<String> items = new ArrayList<>();
+        final List<Runnable> actions = new ArrayList<>();
+
+        items.add("Звільнити пам'ять  (вільно " + freeMemoryMb() + " МБ)");
+        actions.add(this::freeMemory);
+
+        items.add("Таймер сну" + (SleepTimer.status(this) != null ? ": " + SleepTimer.status(this) : ""));
+        actions.add(() -> SleepTimer.show(this, this::updateSleepInfo));
+
+        items.add("Заставка-камін: " + (saver > 0 ? "через " + saver + " хв бездіяльності" : "вимкнено"));
+        actions.add(() -> {
+            int next = SAVER_OPTIONS[0];
+            for (int i = 0; i < SAVER_OPTIONS.length; i++) {
+                if (SAVER_OPTIONS[i] == saver) {
+                    next = SAVER_OPTIONS[(i + 1) % SAVER_OPTIONS.length];
+                    break;
+                }
+            }
+            prefs.edit().putInt(P_SAVER, next).apply();
+            toast(next > 0 ? "Заставка: через " + next + " хв" : "Заставку вимкнено");
+        });
+
+        items.add("Автоперемикання на консоль: " + (auto ? "увімкнено" : "вимкнено"));
+        actions.add(() -> {
+            prefs.edit().putBoolean(P_AUTO, !auto).apply();
+            toast(!auto ? "Автоперемикання увімкнено" : "Автоперемикання вимкнено");
+        });
+
+        items.add("Після ввімкнення ТВ відкривати Домівку: " + (powerOn ? "так" : "ні"));
+        actions.add(() -> {
+            prefs.edit().putBoolean(App.P_POWER_ON_HOME, !powerOn).apply();
+            toast(!powerOn ? "Після ввімкнення відкриватиметься Домівка"
+                    : "Після ввімкнення: як вирішить прошивка");
+        });
+
+        items.add("Приховані застосунки (" + hidden.size() + ")");
+        actions.add(this::showHiddenApps);
+
+        items.add("Налаштування телевізора");
+        actions.add(this::openTvSettings);
+
+        items.add("Заводське меню (увімкнути ADB)");
+        actions.add(this::confirmFactoryMenu);
+
+        items.add("Про Домівку");
+        actions.add(() -> new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Домівка 1.4")
+                .setMessage("Легкий головний екран для телевізора Bravis.\n\n"
+                        + "Menu або довге натискання на плитці: меню плитки.\n"
+                        + "Source: перейти до джерел.\n"
+                        + "Місяць угорі: таймер сну.\n"
+                        + "Камін: OK вмикає звук, ▲▼ годинник, Menu таймер сну.\n"
+                        + "Повернути старий лаунчер: натисніть «Додому» і виберіть його.")
+                .setPositiveButton("Добре", null)
+                .show());
+
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Домівка")
-                .setItems(items, (d, which) -> {
-                    switch (which) {
-                        case 0:
-                            freeMemory();
-                            break;
-                        case 1:
-                            openTvSettings();
-                            break;
-                        case 2:
-                            prefs.edit().putBoolean(P_AUTO, !auto).apply();
-                            toast(!auto ? "Автоперемикання увімкнено" : "Автоперемикання вимкнено");
-                            break;
-                        case 3:
-                            showHiddenApps();
-                            break;
-                        case 4:
-                            prefs.edit().putBoolean(App.P_POWER_ON_HOME, !powerOn).apply();
-                            toast(!powerOn ? "Після ввімкнення відкриватиметься Домівка"
-                                    : "Після ввімкнення: як вирішить прошивка");
-                            break;
-                        case 5:
-                            confirmFactoryMenu();
-                            break;
-                        default:
-                            new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                                    .setTitle("Домівка 1.3")
-                                    .setMessage("Легкий головний екран для телевізора Bravis.\n\n"
-                                            + "Menu або довге натискання на плитці: меню плитки.\n"
-                                            + "Source: перейти до джерел.\n"
-                                            + "Повернути старий лаунчер: натисніть «Додому» і виберіть його.")
-                                    .setPositiveButton("Добре", null)
-                                    .show();
-                    }
-                })
+                .setItems(items.toArray(new String[0]), (d, which) -> actions.get(which).run())
                 .show();
     }
 

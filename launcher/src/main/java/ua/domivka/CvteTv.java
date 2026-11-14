@@ -170,6 +170,23 @@ final class CvteTv {
         return r instanceof Boolean && (Boolean) r;
     }
 
+    // ---- таймер сну прошивки (хвилини; 0: вимкнено)
+
+    private static Object sleepApi() {
+        return call(api, "getTVApiSystemSleepTime");
+    }
+
+    static Integer sleepMinutes() {
+        Object r = call(sleepApi(), "eventSystemSleepTimeGetSleepTime");
+        return r instanceof Integer ? (Integer) r : null;
+    }
+
+    /** Викликати не в головному потоці. */
+    static boolean setSleepMinutes(int minutes) {
+        Object r = call(sleepApi(), "eventSystemSleepTimeSetSleepTime", minutes);
+        return r instanceof Boolean && (Boolean) r;
+    }
+
     /**
      * Відкрити рідний повноекранний ТВ-екран CVTE з поточним джерелом.
      * Action MAIN обов'язковий: без нього екран падає в onNewIntent.

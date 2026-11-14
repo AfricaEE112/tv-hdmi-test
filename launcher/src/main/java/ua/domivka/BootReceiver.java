@@ -8,6 +8,8 @@ import android.content.Intent;
 public class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
+        // Після повного перезапуску таймер сну прошивки скинуто
+        SleepTimer.clear(context);
         final PendingResult pending = goAsync();
         App.schedule(context, pending::finish);
     }
