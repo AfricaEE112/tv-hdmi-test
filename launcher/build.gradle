@@ -11,8 +11,8 @@ android {
         // Телевізор: Android 7.0 (API 24)
         minSdk 24
         targetSdk 25
-        versionCode 3
-        versionName '1.2'
+        versionCode 4
+        versionName '1.3'
     }
 
     signingConfigs {

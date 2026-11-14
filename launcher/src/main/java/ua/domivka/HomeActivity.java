@@ -873,6 +873,7 @@ public class HomeActivity extends Activity {
                 "Автоперемикання на консоль: " + (auto ? "увімкнено" : "вимкнено"),
                 "Приховані застосунки (" + hidden.size() + ")",
                 "Після ввімкнення ТВ відкривати Домівку: " + (powerOn ? "так" : "ні"),
+                "Заводське меню (увімкнути ADB)",
                 "Про Домівку",
         };
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
@@ -897,9 +898,12 @@ public class HomeActivity extends Activity {
                             toast(!powerOn ? "Після ввімкнення відкриватиметься Домівка"
                                     : "Після ввімкнення: як вирішить прошивка");
                             break;
+                        case 5:
+                            confirmFactoryMenu();
+                            break;
                         default:
                             new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                                    .setTitle("Домівка 1.2")
+                                    .setTitle("Домівка 1.3")
                                     .setMessage("Легкий головний екран для телевізора Bravis.\n\n"
                                             + "Menu або довге натискання на плитці: меню плитки.\n"
                                             + "Source: перейти до джерел.\n"
@@ -909,6 +913,31 @@ public class HomeActivity extends Activity {
                     }
                 })
                 .show();
+    }
+
+    /** Заводське меню CVTE (там вмикається ADB). Спершу попереджаємо про небезпечні пункти. */
+    private void confirmFactoryMenu() {
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Заводське меню")
+                .setMessage("Потрібно лише: DEBUG → ADB ENABLE = ON.\n\n"
+                        + "НЕ натискайте пункти зі знаком >>> (SHIPPING INIT, BOARD INIT, "
+                        + "AGING MODE тощо): вони виконуються одразу і можуть скинути телевізор.\n\n"
+                        + "Нічого іншого не змінюйте. Вийти: кнопка «Назад».\n"
+                        + "Після цього вимкніть телевізор з розетки на 10 секунд.")
+                .setPositiveButton("Відкрити", (d, w) -> openFactoryMenu())
+                .setNegativeButton("Скасувати", null)
+                .show();
+    }
+
+    private void openFactoryMenu() {
+        Intent i = new Intent(Intent.ACTION_MAIN)
+                .setClassName("cn.cvte.tv.factory.autotest", "com.cvte.tv.at.menu.CVTFactory_DialogMenuActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(i);
+        } catch (Throwable t) {
+            toast("Не вдалося відкрити заводське меню: " + t.getClass().getSimpleName());
+        }
     }
 
     private void showHiddenApps() {
