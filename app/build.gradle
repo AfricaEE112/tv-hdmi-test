@@ -1,0 +1,28 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ua.tvtest.hdmi'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'ua.tvtest.hdmi'
+        minSdk 21
+        // Телевізор на Android 7 (API 24/25): старий targetSdk не вимагає
+        // запитів дозволів під час роботи.
+        targetSdk 25
+        versionCode 1
+        versionName '0.1'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
