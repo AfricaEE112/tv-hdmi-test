@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="315"
+                android:centerColor="#FF121A33"
+                android:endColor="#FF231638"
+                android:startColor="#FF0A1022"
+                android:type="linear" />
+        </shape>
+    </item>
+    <!-- М'яке світло зверху ліворуч -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:centerX="0.15"
+                android:centerY="0.0"
+                android:endColor="#00000000"
+                android:gradientRadius="900"
+                android:startColor="#332E5BFF"
+                android:type="radial" />
+        </shape>
+    </item>
+</layer-list>

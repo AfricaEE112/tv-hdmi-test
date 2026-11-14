@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ua.domivka'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'ua.domivka'
+        // Телевізор: Android 7.0 (API 24)
+        minSdk 24
+        targetSdk 25
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        tv {
+            storeFile rootProject.file('signing/tv.keystore')
+            storePassword 'tvlauncher'
+            keyAlias 'tv'
+            keyPassword 'tvlauncher'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.tv
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

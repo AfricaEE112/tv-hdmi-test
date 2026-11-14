@@ -20,7 +20,7 @@ android {
     // Це особистий застосунок для одного телевізора, тому ключ лежить у репозиторії.
     signingConfigs {
         tv {
-            storeFile file('signing/tv.keystore')
+            storeFile rootProject.file('signing/tv.keystore')
             storePassword 'tvlauncher'
             keyAlias 'tv'
             keyPassword 'tvlauncher'
