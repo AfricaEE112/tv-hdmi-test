@@ -94,6 +94,7 @@ final class FireView extends View {
     void setBare(boolean bare) {
         this.bare = bare;
         setBackgroundColor(bare ? Color.TRANSPARENT : Color.BLACK);
+        buildPalette();
         if (getWidth() > 0) {
             onSizeChanged(getWidth(), getHeight(), getWidth(), getHeight());
         }
@@ -113,7 +114,17 @@ final class FireView extends View {
 
     private void buildPalette() {
         // позиція, r, g, b, a: від прозорого чорного до білого жару
-        float[][] stops = {
+        // На світлому фоні вітрини темно-червоні напівпрозорі краї виглядали як дим,
+        // тому там холодні ділянки просто прозорі, а колір лише яскравий.
+        float[][] stops = bare ? new float[][]{
+                {0.00f, 255, 70, 10, 0},
+                {0.30f, 255, 80, 12, 0},
+                {0.45f, 255, 100, 18, 120},
+                {0.65f, 255, 140, 35, 220},
+                {0.82f, 255, 190, 70, 250},
+                {0.93f, 255, 228, 140, 255},
+                {1.00f, 255, 250, 215, 255},
+        } : new float[][]{
                 {0.00f, 0, 0, 0, 0},
                 {0.08f, 40, 8, 4, 90},
                 {0.25f, 120, 20, 6, 200},

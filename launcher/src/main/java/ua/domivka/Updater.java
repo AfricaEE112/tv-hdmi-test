@@ -182,7 +182,7 @@ final class Updater {
         void onProgress(int percent);
     }
 
-    private static boolean download(String url, File out, Progress progress) {
+    static boolean download(String url, File out, Progress progress) {
         HttpURLConnection conn = null;
         try {
             conn = open(url);
@@ -191,9 +191,9 @@ final class Updater {
             }
             long total = conn.getContentLength();
             File tmp = new File(out.getPath() + ".part");
+            long done = 0;
             try (InputStream in = conn.getInputStream(); OutputStream os = new FileOutputStream(tmp)) {
                 byte[] buf = new byte[16 * 1024];
-                long done = 0;
                 int lastPercent = -1;
                 int n;
                 while ((n = in.read(buf)) > 0) {
@@ -207,6 +207,12 @@ final class Updater {
                         }
                     }
                 }
+            }
+            if (total > 0 && done != total) {
+                // Зв'язок обірвався: недокачаний файл не вважаємо готовим
+                //noinspection ResultOfMethodCallIgnored
+                tmp.delete();
+                return false;
             }
             //noinspection ResultOfMethodCallIgnored
             out.delete();

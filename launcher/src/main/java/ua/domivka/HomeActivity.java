@@ -972,6 +972,10 @@ public class HomeActivity extends Activity {
         Object tag = v.getTag();
         if (tag instanceof AppEntry) {
             showAppMenu((AppEntry) tag);
+        } else if (TAG_FIRE.equals(tag)) {
+            chooseFireplace();
+        } else if (TAG_WEATHER.equals(tag)) {
+            chooseCity();
         } else if (TAG_CONSOLE.equals(tag) || (tag instanceof String && ((String) tag).startsWith("src:"))) {
             showConsoleMenu();
         } else {
@@ -989,6 +993,9 @@ public class HomeActivity extends Activity {
 
         items.add("Звільнити пам'ять  (вільно " + freeMemoryMb() + " МБ)");
         actions.add(this::freeMemory);
+
+        items.add("Камін: " + FireVideos.title(FireVideos.selected(this)));
+        actions.add(this::chooseFireplace);
 
         items.add("Таймер сну" + (SleepTimer.status(this) != null ? ": " + SleepTimer.status(this) : ""));
         actions.add(() -> SleepTimer.show(this, this::updateSleepInfo));
@@ -1050,7 +1057,9 @@ public class HomeActivity extends Activity {
                         + "Source: перейти до джерел.\n"
                         + "Місяць угорі: таймер сну.\n"
                         + "Камін: OK вмикає звук, ▲▼ годинник, Menu таймер сну.\n"
-                        + "Повернути старий лаунчер: натисніть «Додому» і виберіть його.")
+                        + "Повернути старий лаунчер: натисніть «Додому» і виберіть його.\n\n"
+                        + FireVideos.CREDITS + "\n"
+                        + "Погода: Open-Meteo.com (CC BY 4.0).")
                 .setPositiveButton("Добре", null)
                 .show());
 
@@ -1348,11 +1357,93 @@ public class HomeActivity extends Activity {
 
     private void heroFireplace() {
         int saver = prefs.getInt(P_SAVER, 10);
-        setHero("Камін", "Живий вогонь, жаринки і тріск дров на весь екран",
-                "OK: запалити" + (saver > 0 ? "   ·   як заставка вмикається через " + saver + " хв" : ""));
-        setHeroArt(null, 0, 0, false);
+        String id = FireVideos.selected(this);
+        String state = !FireVideos.isVideo(id) ? ""
+                : FireVideos.isReady(this, id) ? ""
+                : FireVideos.isDownloading(id) ? "  ·  завантажується" : "  ·  завантажиться при першому запуску";
+        setHero("Камін", FireVideos.title(id) + state,
+                "OK: запалити   ·   Menu: вибрати камін"
+                        + (saver > 0 ? "   ·   заставка через " + saver + " хв" : ""));
         setHeroGlow(0x66FF7A2E);
-        setHeroFire(true);
+        Bitmap poster = FireVideos.isVideo(id) ? FireVideos.posterBitmap(this, id) : null;
+        if (poster != null) {
+            BitmapDrawable d = new BitmapDrawable(getResources(), poster);
+            setHeroArt(d, 448, 252, true);
+            // Повільне «дихання» обкладинки, щоб вона не здавалася застиглою
+            heroArt.animate().scaleX(1.04f).scaleY(1.04f).setStartDelay(300).setDuration(6000).start();
+        } else {
+            setHeroArt(null, 0, 0, false);
+            setHeroFire(true);
+            if (FireVideos.isVideo(id)) {
+                FireVideos.fetchPoster(this, id, () -> {
+                    View f = getCurrentFocus();
+                    if (f != null && TAG_FIRE.equals(f.getTag())) {
+                        heroFireplace();
+                    }
+                });
+            }
+        }
+    }
+
+    /** Вибір каміна: справжні відео (завантажуються один раз) або намальований. */
+    private void chooseFireplace() {
+        String current = FireVideos.selected(this);
+        String[] items = new String[FireVideos.IDS.length];
+        for (int i = 0; i < items.length; i++) {
+            String id = FireVideos.IDS[i];
+            String status = !FireVideos.isVideo(id) ? ""
+                    : FireVideos.isReady(this, id) ? "  ✓ завантажено"
+                    : "  (" + FireVideos.SIZES[i] + ")";
+            items[i] = FireVideos.TITLES[i] + status;
+        }
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Камін")
+                .setSingleChoiceItems(items, FireVideos.index(current), (d, which) -> {
+                    d.dismiss();
+                    String id = FireVideos.IDS[which];
+                    FireVideos.select(this, id);
+                    if (FireVideos.isVideo(id) && !FireVideos.isReady(this, id)) {
+                        downloadFireplace(id);
+                    } else {
+                        toast("Камін: " + FireVideos.title(id));
+                    }
+                })
+                .show();
+    }
+
+    private void downloadFireplace(String id) {
+        String busy = FireVideos.downloading();
+        if (busy != null) {
+            toast(busy.equals(id) ? "Цей камін уже завантажується"
+                    : "Зараз завантажується «" + FireVideos.title(busy) + "», спробуйте трохи згодом");
+            return;
+        }
+        final AlertDialog dlg = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(FireVideos.title(id))
+                .setMessage("Завантажую... Можна закрити це вікно: завантаження продовжиться.")
+                .setPositiveButton("Сховати", null)
+                .show();
+        FireVideos.download(this, id, new FireVideos.Listener() {
+            @Override
+            public void onProgress(int percent) {
+                if (dlg.isShowing()) {
+                    dlg.setMessage("Завантажую... " + percent + "%\nМожна закрити це вікно: завантаження продовжиться.");
+                }
+            }
+
+            @Override
+            public void onDone(boolean ok) {
+                if (dlg.isShowing()) {
+                    dlg.dismiss();
+                }
+                toast(ok ? "Камін завантажено: «" + FireVideos.title(id) + "»"
+                        : "Не вдалося завантажити камін: перевірте інтернет");
+                View f = getCurrentFocus();
+                if (f != null && TAG_FIRE.equals(f.getTag())) {
+                    heroFireplace();
+                }
+            }
+        });
     }
 
     private void heroWeather() {
