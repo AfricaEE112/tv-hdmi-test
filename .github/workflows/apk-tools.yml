@@ -3,7 +3,7 @@ name: APK tools
 # база рівнів API (api-versions.xml з Android SDK) і шими, зібрані d8 під minSdk 24.
 on:
   push:
-    paths: ['.github/workflows/apk-tools.yml', 'tools/apkfix/**']
+    paths: ['.github/workflows/apk-tools.yml']
   workflow_dispatch:
 permissions:
   contents: write
@@ -31,11 +31,11 @@ jobs:
           echo "$JAR $BT" > out/versions.txt
       - name: Build shims (if any)
         run: |
-          if [ -d tools/apkfix/shim ]; then
+          if [ -d apkfix/shim ]; then
             BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
             JAR=$(ls "$ANDROID_HOME"/platforms/android-*/android.jar | sort -V | tail -1)
             mkdir -p cls
-            javac --release 8 -encoding UTF-8 -cp "$JAR" -d cls $(find tools/apkfix/shim -name '*.java')
+            javac --release 8 -encoding UTF-8 -cp "$JAR" -d cls $(find apkfix/shim -name '*.java')
             "$BT/d8" --release --min-api 24 --lib "$JAR" --output out $(find cls -name '*.class')
             mv out/classes.dex out/shim.dex
           fi

@@ -223,6 +223,33 @@ function Invoke-Restore {
 
 # ---------------------------------------------------------------- 4/5. Головний екран
 
+function Invoke-InstallApk {
+    $apks = @(Get-ChildItem -Path $Here -Filter *.apk | Sort-Object LastWriteTime -Descending)
+    if ($apks.Count -eq 0) {
+        Write-Host 'Покладіть APK у папку з цим скриптом і виберіть пункт ще раз.'
+        return
+    }
+    for ($i = 0; $i -lt $apks.Count; $i++) { Write-Host "  $($i + 1) - $($apks[$i].Name)" }
+    $n = Read-Host 'Номер файлу [1]'
+    if (-not $n) { $n = 1 }
+    $apk = $apks[[int]$n - 1]
+    Write-Host "Встановлюю $($apk.Name), це може зайняти хвилину..."
+    $out = (& $Adb -s $script:Target install -r "$($apk.FullName)" 2>&1 | Out-String).Trim()
+    Write-Host $out
+    if ($out -match 'UPDATE_INCOMPATIBLE') {
+        Write-Host 'Цей застосунок уже стоїть з іншим підписом: спершу видаліть його на телевізорі.'
+    }
+}
+
+function Save-Log {
+    & $Adb -s $script:Target logcat -c 2>&1 | Out-Null
+    Read-Host 'Журнал очищено. Відкрийте на телевізорі застосунок, дочекайтеся помилки і натисніть Enter тут'
+    $file = Join-Path $Here ('tv-log-' + (Get-Date -Format 'yyyyMMdd-HHmm') + '.txt')
+    & $Adb -s $script:Target logcat -d -v time 2>&1 | Out-File -Encoding utf8 $file
+    Write-Host "Журнал збережено: $file"
+    Write-Host 'Надішліть цей файл у чат.'
+}
+
 function Set-Home([string]$component, [string]$name) {
     $r = Invoke-Sh "cmd package set-home-activity $component"
     Write-Host "Головний екран: $name. $r"
@@ -254,6 +281,8 @@ while (-not $quit) {
     Write-Host '3 - Відновити все, що вимкнув скрипт'
     Write-Host '4 - Зробити Домівку головним екраном'
     Write-Host '5 - Повернути штатний головний екран'
+    Write-Host '6 - Встановити APK з цієї папки'
+    Write-Host '7 - Записати журнал помилок (якщо застосунок вилітає)'
     Write-Host '0 - Вихід'
     switch (Read-Host 'Виберіть') {
         '1' { Invoke-Report }
@@ -270,6 +299,8 @@ while (-not $quit) {
             Write-Host 'і дозвіл показувати тривогу поверх інших застосунків.'
         }
         '5' { Set-Home 'com.cvte.tv.launcher/.AppActivity' 'штатний' }
+        '6' { Invoke-InstallApk }
+        '7' { Save-Log }
         '0' { $quit = $true }
         default { Write-Host 'Невідомий пункт.' }
     }
