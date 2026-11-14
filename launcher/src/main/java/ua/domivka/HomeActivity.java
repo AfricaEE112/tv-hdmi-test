@@ -1,6 +1,7 @@
 package ua.domivka;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -9,6 +10,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Color;
@@ -863,6 +865,7 @@ public class HomeActivity extends Activity {
         final Set<String> hidden = hidden();
         final boolean auto = prefs.getBoolean(P_AUTO, true);
         String[] items = {
+                "Звільнити пам'ять  (вільно " + freeMemoryMb() + " МБ)",
                 "Налаштування телевізора",
                 "Автоперемикання на консоль: " + (auto ? "увімкнено" : "вимкнено"),
                 "Приховані застосунки (" + hidden.size() + ")",
@@ -873,18 +876,21 @@ public class HomeActivity extends Activity {
                 .setItems(items, (d, which) -> {
                     switch (which) {
                         case 0:
-                            openTvSettings();
+                            freeMemory();
                             break;
                         case 1:
+                            openTvSettings();
+                            break;
+                        case 2:
                             prefs.edit().putBoolean(P_AUTO, !auto).apply();
                             toast(!auto ? "Автоперемикання увімкнено" : "Автоперемикання вимкнено");
                             break;
-                        case 2:
+                        case 3:
                             showHiddenApps();
                             break;
                         default:
                             new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                                    .setTitle("Домівка 1.0")
+                                    .setTitle("Домівка 1.1")
                                     .setMessage("Легкий головний екран для телевізора Bravis.\n\n"
                                             + "Menu або довге натискання на плитці: меню плитки.\n"
                                             + "Source: перейти до джерел.\n"
@@ -920,6 +926,46 @@ public class HomeActivity extends Activity {
                     rebuildApps();
                 })
                 .show();
+    }
+
+    // ---------------------------------------------------------------- пам'ять
+
+    /** Пакети, які не чіпаємо: ТВ-частина прошивки, система, клавіатура. */
+    private static boolean isEssential(String pkg) {
+        return pkg.equals("android") || pkg.startsWith("com.android.") || pkg.startsWith("com.mediatek.")
+                || pkg.equals("com.cvte.tv.api.impl") || pkg.equals("com.cvte.tvservice")
+                || pkg.equals("com.cvte.tv.androidsetting") || pkg.equals("com.example.user.myapplication");
+    }
+
+    private long freeMemoryMb() {
+        ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        return mi.availMem / (1024 * 1024);
+    }
+
+    /** Вивантажити фонові процеси інших застосунків. Ефект тимчасовий: сервіси можуть піднятися знову. */
+    private void freeMemory() {
+        toast("Звільняю пам'ять...");
+        final long before = freeMemoryMb();
+        worker.execute(() -> {
+            ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            int count = 0;
+            try {
+                for (ApplicationInfo ai : getPackageManager().getInstalledApplications(0)) {
+                    String pkg = ai.packageName;
+                    if (pkg.equals(getPackageName()) || isEssential(pkg)) {
+                        continue;
+                    }
+                    am.killBackgroundProcesses(pkg);
+                    count++;
+                }
+                Thread.sleep(1500);
+            } catch (Throwable ignored) {
+            }
+            final long after = freeMemoryMb();
+            main.post(() -> toast("Вільно " + after + " МБ (було " + before + " МБ)"));
+        });
     }
 
     private void openTvSettings() {

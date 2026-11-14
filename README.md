@@ -7,6 +7,8 @@
 
 - **Домівка (лаунчер):** https://github.com/AfricaEE112/tv-hdmi-test/releases/download/latest/domivka.apk
 - HDMI тест (діагностика): https://github.com/AfricaEE112/tv-hdmi-test/releases/download/latest/hdmi-test.apk
+- Інструменти для ПК (вимкнути мотлох виробника через ADB): https://github.com/AfricaEE112/tv-hdmi-test/releases/download/latest/tv-tools.zip
+  (інструкція всередині, `README.txt`)
 
 APK збирає GitHub Actions при кожному push у `main`. Усі збірки підписані одним
 ключем (`signing/`), тому нові версії ставляться поверх старих.
