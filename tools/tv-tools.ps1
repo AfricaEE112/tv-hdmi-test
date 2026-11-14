@@ -12,6 +12,10 @@ $HiddenFile = Join-Path $Here 'hidden-by-script.txt'
 
 # Без цих пакетів com.google.android.gms падає з повідомленням про помилку.
 $GmsDeps = @('com.google.android.gsf', 'com.google.android.gsf.login', 'com.google.android.gsf.notouch')
+
+# «Постійні» системні пакети: система запускає їх при старті навіть вимкненими, і вони
+# падають. Такі пакети треба приховувати (pm hide): тоді система їх не бачить і не запускає.
+$HideFirst = @('com.google.android.gms')
 $script:Target = ''
 
 # Ці пакети скрипт не вимикає ніколи, навіть якщо вони потраплять у список.
@@ -161,15 +165,23 @@ function Invoke-Optimize {
         }
     }
 
-    # Якщо головний сервіс Google лишився працювати, а його залежності вимкнено,
-    # він падає з повідомленням. Тоді повертаємо залежності.
-    $active = Get-Packages
-    $off = Get-Packages '-d'
-    if (($active -contains 'com.google.android.gms') -and -not ($off -contains 'com.google.android.gms')) {
-        Write-Host ''
-        Write-Host 'Сервіс com.google.android.gms вимкнути не вдалося. Щоб він не падав з повідомленням,'
-        Write-Host 'вмикаю назад його залежності (Google Services Framework).'
-        foreach ($d in $GmsDeps) { Invoke-Sh "pm enable $d" | Out-Null }
+    # «Постійні» пакети приховуємо, навіть якщо їх уже вимкнено: інакше система все одно
+    # запускає їх при старті, і вони падають з повідомленням.
+    $active = Get-Packages   # приховані сюди не потрапляють, вимкнені потрапляють
+    $listed = @(Get-Content $ListFile -Encoding UTF8 | ForEach-Object { ($_ -replace '#.*$', '').Trim() })
+    foreach ($p in $HideFirst) {
+        if (-not ($active -contains $p) -or -not ($listed -contains $p)) { continue }
+        $h = Invoke-Sh "pm hide $p"
+        if ($h -match 'true') {
+            Add-Content -Path $HiddenFile -Value $p
+            Write-Host "  приховано (щоб не запускався і не падав): $p"
+        } else {
+            Write-Host ''
+            Write-Host "Не вдалося приховати $p ($h)."
+            Write-Host 'Щоб не було повідомлень про помилку, вмикаю сервіси Google назад.'
+            Invoke-Sh "pm enable $p" | Out-Null
+            foreach ($d in $GmsDeps) { Invoke-Sh "pm enable $d" | Out-Null }
+        }
     }
 
     Set-Animations '0.5'
