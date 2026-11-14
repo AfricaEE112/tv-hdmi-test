@@ -217,7 +217,13 @@ while (-not $quit) {
         '1' { Invoke-Report }
         '2' { Invoke-Optimize }
         '3' { Invoke-Restore }
-        '4' { Set-Home 'ua.domivka/.HomeActivity' 'Домівка' }
+        '4' {
+            Set-Home 'ua.domivka/.HomeActivity' 'Домівка'
+            # Доступ до статистики: Домівка точно бачитиме, що прошивка після ввімкнення
+            # відкрила штатний лаунчер, і підмінятиме лише його
+            Invoke-Sh 'appops set ua.domivka GET_USAGE_STATS allow' | Out-Null
+            Write-Host 'Домівці надано доступ до статистики використання (сторож увімкнення).'
+        }
         '5' { Set-Home 'com.cvte.tv.launcher/.AppActivity' 'штатний' }
         '0' { $quit = $true }
         default { Write-Host 'Невідомий пункт.' }

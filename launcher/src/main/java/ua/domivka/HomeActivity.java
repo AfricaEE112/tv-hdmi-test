@@ -166,6 +166,7 @@ public class HomeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         resumed = true;
+        App.homeResumed = true;
         updateGreeting();
         refreshSourceStates();
     }
@@ -174,6 +175,7 @@ public class HomeActivity extends Activity {
     protected void onPause() {
         super.onPause();
         resumed = false;
+        App.homeResumed = false;
     }
 
     @Override
@@ -864,11 +866,13 @@ public class HomeActivity extends Activity {
     private void showLauncherSettings() {
         final Set<String> hidden = hidden();
         final boolean auto = prefs.getBoolean(P_AUTO, true);
+        final boolean powerOn = prefs.getBoolean(App.P_POWER_ON_HOME, true);
         String[] items = {
                 "Звільнити пам'ять  (вільно " + freeMemoryMb() + " МБ)",
                 "Налаштування телевізора",
                 "Автоперемикання на консоль: " + (auto ? "увімкнено" : "вимкнено"),
                 "Приховані застосунки (" + hidden.size() + ")",
+                "Після ввімкнення ТВ відкривати Домівку: " + (powerOn ? "так" : "ні"),
                 "Про Домівку",
         };
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
@@ -888,9 +892,14 @@ public class HomeActivity extends Activity {
                         case 3:
                             showHiddenApps();
                             break;
+                        case 4:
+                            prefs.edit().putBoolean(App.P_POWER_ON_HOME, !powerOn).apply();
+                            toast(!powerOn ? "Після ввімкнення відкриватиметься Домівка"
+                                    : "Після ввімкнення: як вирішить прошивка");
+                            break;
                         default:
                             new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                                    .setTitle("Домівка 1.1")
+                                    .setTitle("Домівка 1.2")
                                     .setMessage("Легкий головний екран для телевізора Bravis.\n\n"
                                             + "Menu або довге натискання на плитці: меню плитки.\n"
                                             + "Source: перейти до джерел.\n"
