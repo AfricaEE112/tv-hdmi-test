@@ -1,0 +1,56 @@
+name: Build fireplace media
+
+# Готує відео каміна для Домівки з вільно ліцензованих відео Wikimedia Commons
+# і викладає їх у реліз «media» (окремо від збірок, щоб не перезбирати щоразу).
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/media.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UA: 'DomivkaMedia/1.0 (https://github.com/AfricaEE112/tv-hdmi-test)'
+
+jobs:
+  media:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+
+      - name: Download sources
+        run: |
+          mkdir -p src
+          # Valley Forge Yule Log — National Park Service, суспільне надбання
+          curl -sSL -A "$UA" -o src/yule.webm 'https://upload.wikimedia.org/wikipedia/commons/2/20/Valley_Forge_Yule_Log.webm' || true
+          # Kaminfeuer — Larvis, CC BY-SA 4.0
+          curl -sSL -A "$UA" -o src/kamin.webm 'https://upload.wikimedia.org/wikipedia/commons/b/be/Kaminfeuer.webm' || true
+          # Fantastic fireplace — free video library, CC BY 3.0
+          curl -sSL -A "$UA" -o src/brick.webm 'https://upload.wikimedia.org/wikipedia/commons/b/bb/Fantastic-fireplace-fire-chimney-hearth-_background_-_texture_-_motion_graphics_-_free_video_library.webm' || true
+          ls -la src
+
+      - name: Probe and preview frames
+        run: |
+          mkdir -p out/frames
+          for f in src/*.webm; do
+            n=$(basename "$f" .webm)
+            echo "== $n"; ffprobe -v error -show_entries format=duration:stream=codec_type,codec_name,width,height -of compact "$f" | tee "out/$n.probe.txt" || true
+          done
+          # Кадри з Yule Log кожні 60 с, щоб вибрати найкращий відрізок
+          for t in $(seq 30 60 1680); do
+            ffmpeg -v error -ss $t -i src/yule.webm -frames:v 1 -vf scale=480:-2 "out/frames/yule_$(printf %04d $t).jpg" || true
+          done
+          for t in 1 5 9; do ffmpeg -v error -ss $t -i src/kamin.webm -frames:v 1 -vf scale=480:-2 "out/frames/kamin_$t.jpg" || true; done
+          for t in 2 12 24; do ffmpeg -v error -ss $t -i src/brick.webm -frames:v 1 -vf scale=480:-2 "out/frames/brick_$t.jpg" || true; done
+          (cd out && zip -qr ../media-probe.zip .)
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete media --yes --cleanup-tag || true
+          gh release create media media-probe.zip --target "${{ github.sha }}" --title "Відео каміна" --notes "Службовий реліз з відео для Домівки" --prerelease

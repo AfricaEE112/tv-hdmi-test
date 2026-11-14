@@ -31,6 +31,11 @@ jobs:
           cp launcher/build/outputs/apk/debug/launcher-debug.apk domivka.apk
           cp app/build/outputs/apk/debug/app-debug.apk hdmi-test.apk
           (cd tools && zip -r ../tv-tools.zip .)
+          # Для оновлення по повітрю: Домівка порівнює versionCode зі своїм
+          VC=$(grep -oP "versionCode \K[0-9]+" launcher/build.gradle)
+          VN=$(grep -oP "versionName '\K[^']+" launcher/build.gradle)
+          printf '{"versionCode": %s, "versionName": "%s"}\n' "$VC" "$VN" > version.json
+          cat version.json
 
       - uses: actions/upload-artifact@v4
         with:
@@ -47,7 +52,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest domivka.apk hdmi-test.apk tv-tools.zip \
+          gh release create latest domivka.apk hdmi-test.apk tv-tools.zip version.json \
             --target "${{ github.sha }}" \
             --title "Остання збірка" \
             --notes "Автоматична збірка з коміту ${{ github.sha }}"

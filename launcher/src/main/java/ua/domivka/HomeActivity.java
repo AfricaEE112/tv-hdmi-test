@@ -145,6 +145,9 @@ public class HomeActivity extends Activity {
             }
             updateSleepInfo();
             refreshWeather(false);
+            if (resumed) {
+                Updater.checkAndPrompt(HomeActivity.this, false);
+            }
             main.postDelayed(this, 30_000);
         }
     };
@@ -211,6 +214,7 @@ public class HomeActivity extends Activity {
         loadSources();
         refreshWeather(false);
         main.post(this::focusConsole);
+        main.postDelayed(() -> Updater.checkAndPrompt(this, false), 8000);
     }
 
     @Override
@@ -1024,12 +1028,23 @@ public class HomeActivity extends Activity {
         items.add("Налаштування телевізора");
         actions.add(this::openTvSettings);
 
+        final String newVersion = Updater.availableName(this);
+        items.add(newVersion != null ? "Оновити Домівку до версії " + newVersion
+                : "Перевірити оновлення (у вас " + Updater.currentName(this) + ")");
+        actions.add(() -> {
+            if (newVersion != null) {
+                Updater.downloadAndInstall(this);
+            } else {
+                Updater.checkAndPrompt(this, true);
+            }
+        });
+
         items.add("Заводське меню (увімкнути ADB)");
         actions.add(this::confirmFactoryMenu);
 
         items.add("Про Домівку");
         actions.add(() -> new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Домівка 2.0")
+                .setTitle("Домівка " + Updater.currentName(this))
                 .setMessage("Легкий головний екран для телевізора Bravis.\n\n"
                         + "Menu або довге натискання на плитці: меню плитки.\n"
                         + "Source: перейти до джерел.\n"
