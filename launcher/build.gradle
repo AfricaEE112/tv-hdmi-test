@@ -21,6 +21,10 @@ android {
             storePassword 'tvlauncher'
             keyAlias 'tv'
             keyPassword 'tvlauncher'
+            // Установник цього телевізора (Android 7.0) не приймає APK лише з підписом v2.
+            // При minSdk 24 Gradle вимикає v1 за замовчуванням, тому вмикаємо обидва явно.
+            enableV1Signing true
+            enableV2Signing true
         }
     }
 
