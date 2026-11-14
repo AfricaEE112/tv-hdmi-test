@@ -12,15 +12,38 @@ cm.aptoidetv.pt.changhong_platform7   # Aptoide TV (магазин з рекла
 com.cvte.tv.appstore                  # магазин CVTE («список додатків»)
 com.cvte.tvclean                      # TV Clean
 com.cvte.tv.systemupgrade             # перевірка оновлень (для моделі 2018 року їх уже немає)
+com.cvte.huanwangota                  # ще одна перевірка оновлень (~3 МБ)
 
-# --- Передвстановлені сервіси та реклама
+# --- Фонові служби CVTE
+com.cvte.tv.ucservice                 # TvUAService, схоже на збір статистики (~13 МБ)
+
+# --- Сервіси Google (~177 МБ). Play Маркету на ТВ немає; SmartTube, Jellyfin,
+# --- браузер працюють без них. Якщо якась програма почне скаржитися: пункт 3.
+com.google.android.gms
+com.google.android.gsf
+com.google.android.gsf.login
+com.google.android.gsf.notouch
+com.google.android.partnersetup
+com.google.android.configupdater
+com.google.android.onetimeinitializer
+com.google.android.backuptransport
+com.google.android.feedback
+com.google.android.voicesearch
+com.google.android.marvin.talkback    # TalkBack (озвучення екрана)
+
+# --- Трансляція з телефона: AirPlay, EShare (~37 МБ)
+com.ecloud.eairplay
+com.ecloud.eshare.server
+com.ecloud.emedia
+
+# --- Дрібниці
+com.android.printservice.recommendation   # друк
+com.svox.pico                             # синтез мовлення
+
+# --- Передвстановлені сервіси та реклама (якщо колись з'являться)
 ~iflix
 ~dailymotion
 ~com.ted.
 ~zeasn
 ~accuweather
 ~facebook
-
-# --- Трансляція з телефона. Якщо не користуєтесь, приберіть # нижче
-# ~eshare
-# ~airplay
