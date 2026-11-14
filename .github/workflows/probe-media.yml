@@ -1,0 +1,74 @@
+name: Probe fireplace videos
+
+# Пошук вільно ліцензованих відео каміна на Wikimedia Commons: список з ліцензіями
+# і кадр з кожного відео, щоб вибрати найреалістичніше.
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/probe-media.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Search Wikimedia Commons
+        run: |
+          mkdir -p probe/thumbs
+          cd probe
+          UA='DomivkaProbe/1.0 (https://github.com/AfricaEE112/tv-hdmi-test)'
+          for q in 'fireplace filetype:video' 'fire in fireplace filetype:video' 'Kaminfeuer filetype:video' 'burning logs filetype:video' 'campfire filetype:video' 'wood fire filetype:video'; do
+            curl -sG 'https://commons.wikimedia.org/w/api.php' -A "$UA" \
+              --data-urlencode 'action=query' --data-urlencode 'format=json' \
+              --data-urlencode 'generator=search' --data-urlencode "gsrsearch=$q" \
+              --data-urlencode 'gsrnamespace=6' --data-urlencode 'gsrlimit=25' \
+              --data-urlencode 'prop=imageinfo' \
+              --data-urlencode 'iiprop=url|size|mediatype|extmetadata' \
+              --data-urlencode 'iiurlwidth=480' > "search-$(echo "$q" | tr ' :' '__').json"
+            sleep 1
+          done
+          python3 - <<'EOF'
+          import json, glob, urllib.request
+          UA = 'DomivkaProbe/1.0 (https://github.com/AfricaEE112/tv-hdmi-test)'
+          seen = {}
+          for f in glob.glob('search-*.json'):
+              data = json.load(open(f))
+              for p in data.get('query', {}).get('pages', {}).values():
+                  ii = (p.get('imageinfo') or [{}])[0]
+                  if ii.get('mediatype') != 'VIDEO':
+                      continue
+                  meta = ii.get('extmetadata', {})
+                  seen[p['title']] = {
+                      'title': p['title'],
+                      'url': ii.get('url'),
+                      'thumb': ii.get('thumburl'),
+                      'w': ii.get('width'), 'h': ii.get('height'), 'size': ii.get('size'),
+                      'duration': ii.get('duration'),
+                      'license': meta.get('LicenseShortName', {}).get('value'),
+                      'artist': meta.get('Artist', {}).get('value', '')[:200],
+                  }
+          items = sorted(seen.values(), key=lambda x: x['title'])
+          with open('summary.txt', 'w') as out:
+              for i, it in enumerate(items):
+                  out.write(f"{i:02d} | {it['title']} | {it['w']}x{it['h']} | {it['duration']} s | {it['size']} B | {it['license']} | {it['artist']}\n   {it['url']}\n")
+                  if it['thumb']:
+                      try:
+                          req = urllib.request.Request(it['thumb'], headers={'User-Agent': UA})
+                          open(f'thumbs/{i:02d}.jpg', 'wb').write(urllib.request.urlopen(req, timeout=30).read())
+                      except Exception as e:
+                          out.write(f"   thumb error: {e}\n")
+          json.dump(items, open('items.json', 'w'), ensure_ascii=False, indent=1)
+          print(open('summary.txt').read())
+          EOF
+          cd .. && zip -qr probe.zip probe
+
+      - name: Publish probe results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete probe --yes --cleanup-tag || true
+          gh release create probe probe.zip --target "${{ github.sha }}" --title "Пошук відео каміна" --notes "Службовий реліз" --prerelease
